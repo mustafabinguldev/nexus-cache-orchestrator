@@ -88,6 +88,7 @@ public class NexusReceiver extends JedisPubSub {
                         case GET_DATA -> addon.get().handleGet(source, requestDataContainer);
                         case SET_DATA -> addon.get().handleSet(source, requestDataContainer);
                         case REMOVE_DATA -> addon.get().handleRemove(source, requestDataContainer);
+                        case INCREMENT_DATA -> addon.get().handleIncrementData(source, requestDataContainer);
                     }
                 }
             } catch (Exception exception) {
