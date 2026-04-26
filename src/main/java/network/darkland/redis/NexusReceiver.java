@@ -8,10 +8,21 @@ import network.darkland.util.JsonUtils;
 import redis.clients.jedis.JedisPubSub;
 
 import java.util.Optional;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class NexusReceiver extends JedisPubSub {
 
-    private RedisManager redisManager;
+    private static final Logger LOGGER = Logger.getLogger(NexusReceiver.class.getName());
+
+    private static final String FIELD_TYPE     = "type";
+    private static final String FIELD_PROTOCOL = "protocol";
+    private static final String FIELD_KEY      = "key";
+    private static final String FIELD_SOURCE   = "source";
+    private static final String FIELD_DATA     = "data";
+
+    private final RedisManager redisManager;
+
     public NexusReceiver(RedisManager redisManager) {
         this.redisManager = redisManager;
     }
@@ -25,78 +36,116 @@ public class NexusReceiver extends JedisPubSub {
         try {
             NexusJsonDataContainer dataContainer = new NexusJsonDataContainer(message);
 
-            if (!dataContainer.containsKey("type")) {
+            if (!dataContainer.containsKey(FIELD_TYPE)) {
+                LOGGER.fine("Incoming message is missing the 'type' field, skipping.");
                 return;
             }
 
-            String typeStr = dataContainer.get("type", String.class);
+            String typeStr = dataContainer.get(FIELD_TYPE, String.class);
             DataAddon.RequestType type;
             try {
                 type = DataAddon.RequestType.valueOf(typeStr);
-            } catch (Exception exception) {
+            } catch (IllegalArgumentException e) {
+                LOGGER.warning("Unknown RequestType received: " + typeStr);
                 return;
             }
 
-            if (type.equals(DataAddon.RequestType.LOAD_CACHE)) {
-                if (!dataContainer.containsKey("protocol") || !dataContainer.containsKey("key")) {
-                    return;
-                }
-                int protocol = dataContainer.get("protocol", Integer.class);
-                String key = dataContainer.get("key", String.class);
-                Optional<DataAddon> addon = NexusApplication.getApplication().getProtocolHandler().getAddonById(protocol);
-                if (addon.isPresent()) {
-                    addon.get().loadIntoCache(key);
-                }
+            if (type == DataAddon.RequestType.LOAD_CACHE) {
+                handleLoadCache(dataContainer);
                 return;
             }
 
-            if (!dataContainer.containsKey("protocol") || !dataContainer.containsKey("source")) {
+            if (!dataContainer.containsKey(FIELD_PROTOCOL) || !dataContainer.containsKey(FIELD_SOURCE)) {
+                LOGGER.fine("Message is missing required 'protocol' or 'source' field, skipping.");
                 return;
             }
-            if (type.equals(DataAddon.RequestType.BROADCAST)) {
+
+            if (type == DataAddon.RequestType.BROADCAST) {
+                handleBroadcast(dataContainer);
                 return;
             }
-            if (!dataContainer.containsKey("data")) {
+
+            if (!dataContainer.containsKey(FIELD_DATA)) {
+                LOGGER.fine("Message is missing the 'data' field, skipping.");
                 return;
             }
 
             int protocolId;
             try {
-                protocolId = dataContainer.get("protocol", Integer.class);
-            } catch (Exception exception) {
+                protocolId = dataContainer.get(FIELD_PROTOCOL, Integer.class);
+            } catch (Exception e) {
+                LOGGER.warning("Failed to parse 'protocol' field as integer.");
                 return;
             }
-            String source = dataContainer.get("source", String.class);
-            Object dataObj = dataContainer.get("data", Object.class);
-            String jsonData;
 
-            if (dataObj instanceof String) {
-                jsonData = (String) dataObj;
+            String source  = dataContainer.get(FIELD_SOURCE, String.class);
+            Object dataObj = dataContainer.get(FIELD_DATA, Object.class);
+
+            if (dataObj == null) {
+                LOGGER.fine("'data' field is null, skipping.");
+                return;
+            }
+
+            String jsonData;
+            if (dataObj instanceof String s) {
+                jsonData = s;
             } else {
                 jsonData = JsonUtils.getMapper().writeValueAsString(dataObj);
             }
 
-            NexusJsonDataContainer requestDataContainer;
-            try {
-                requestDataContainer = new NexusJsonDataContainer(jsonData);
-                Optional<DataAddon> addon = redisManager.getApplication().getProtocolHandler().getAddonById(protocolId);
-                if (addon.isEmpty()) {
-                    return;
-                }
-                if (addon.get().handleRequest(source, type, requestDataContainer)) {
-                    switch (type) {
-                        case GET_DATA -> addon.get().handleGet(source, requestDataContainer);
-                        case SET_DATA -> addon.get().handleSet(source, requestDataContainer);
-                        case REMOVE_DATA -> addon.get().handleRemove(source, requestDataContainer);
-                        case INCREMENT_DATA -> addon.get().handleIncrementData(source, requestDataContainer);
-                    }
-                }
-            } catch (Exception exception) {
+            Optional<DataAddon> addonOpt = redisManager.getApplication()
+                    .getProtocolHandler()
+                    .getAddonById(protocolId);
+
+            if (addonOpt.isEmpty()) {
+                LOGGER.fine("No addon found for protocol ID: " + protocolId);
                 return;
             }
 
+            DataAddon addon = addonOpt.get();
+            NexusJsonDataContainer requestData = new NexusJsonDataContainer(jsonData);
+
+            if (!addon.handleRequest(source, type, requestData)) {
+                return;
+            }
+
+            switch (type) {
+                case GET_DATA       -> addon.handleGet(source, requestData);
+                case SET_DATA       -> addon.handleSet(source, requestData);
+                case REMOVE_DATA    -> addon.handleRemove(source, requestData);
+                case INCREMENT_DATA -> addon.handleIncrementData(source, requestData);
+                default             -> LOGGER.warning("Unhandled RequestType: " + type);
+            }
+
         } catch (JsonProcessingException e) {
+            LOGGER.log(Level.SEVERE, "JSON processing error: " + e.getMessage(), e);
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "Unexpected error while handling sync message: " + e.getMessage(), e);
+        }
+    }
+
+    private void handleLoadCache(NexusJsonDataContainer dataContainer) {
+        if (!dataContainer.containsKey(FIELD_PROTOCOL) || !dataContainer.containsKey(FIELD_KEY)) {
+            LOGGER.fine("LOAD_CACHE: Missing required 'protocol' or 'key' field.");
             return;
         }
+
+        int protocol = dataContainer.get(FIELD_PROTOCOL, Integer.class);
+        String key   = dataContainer.get(FIELD_KEY, String.class);
+
+        Optional<DataAddon> addonOpt = NexusApplication.getApplication()
+                .getProtocolHandler()
+                .getAddonById(protocol);
+
+        if (addonOpt.isPresent()) {
+            addonOpt.get().loadIntoCache(key);
+        } else {
+            LOGGER.fine("LOAD_CACHE: No addon found for protocol ID: " + protocol);
+        }
+
+    }
+
+    private void handleBroadcast(NexusJsonDataContainer dataContainer) {
+        LOGGER.fine("BROADCAST message received, no handler implemented yet.");
     }
 }
