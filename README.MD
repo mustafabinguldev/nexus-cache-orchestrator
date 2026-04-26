@@ -1,5 +1,5 @@
 # ⬡ NEXUS CORE
-### Advanced Asynchronous Data Orchestration Engine `v1.1.0`
+### Advanced Asynchronous Data Orchestration Engine `v1.2.0`
 
 > *"The central brain between your distributed Minecraft infrastructure and your persistent data layer."*
 
@@ -132,13 +132,15 @@ Spigot Server                Redis                  Nexus Core               Mon
 ```
 
 ### Request Types
-
 | Type | Description | MongoDB Operation | Cache |
 |------|-------------|-------------------|-------|
-| `GET` | Fetch a document by ID field | `findOne()` | Read-through |
-| `SET` | Insert or update a document | `replaceOne(upsert)` | Write-through |
-| `DELETE` | Remove a document by ID | `deleteOne()` | Invalidate |
-| `GET_ALL` | Fetch all documents in collection | `find()` | Bypass |
+| `GET_DATA` | Fetch a document by ID field | `findOne()` | Read-through |
+| `SET_DATA` | Insert or update a document | `replaceOne(upsert)` | Write-through |
+| `REMOVE_DATA` | Remove a document by ID | `deleteOne()` | Invalidate |
+| `INCREMENT_DATA` | Atomically increment a numeric field on an existing document | `findOne()` + in-memory mutate | Write-through |
+| `UPDATE_DATA` | Partially update fields on an existing document | `updateOne()` | Write-through |
+| `BROADCAST` | Push a data payload to a target server over Redis pub/sub | None | Bypass |
+| `LOAD_CACHE` | Pre-load a document into memory cache by ID | `findOne()` | Warm |
 
 ---
 
@@ -341,7 +343,7 @@ public abstract class DataAddon {
      * Called before every data operation.
      *
      * @param source      The server ID that originated the request (e.g. "pvp-1")
-     * @param requestType GET / SET / DELETE / GET_ALL
+     * @param requestType GET_DATA / SET_DATA / REMOVE_DATA / INCREMENT_DATA 
      * @param data        The payload container from the incoming packet
      * @return true  → process the request normally
      *         false → reject and send an empty response back to source
@@ -447,7 +449,7 @@ Publish to Redis
 {
   "protocol": 100,
   "source":   "pvp-1",
-  "type":     "GET",
+  "type":     "GET_DATA",
   "data": {
     "uuid": "550e8400-e29b-41d4-a716-446655440000"
   }
@@ -567,7 +569,7 @@ The entire point of Nexus Core is centralized data access. Bypassing it defeats 
 
 <div align="center">
 
-**⬡ NEXUS CORE v1.0**
+**⬡ NEXUS CORE v1.2**
 
 *Built for performance. Designed for scale.*
 
