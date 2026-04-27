@@ -49,6 +49,8 @@ public abstract class DataAddon {
 
     public abstract String getCollection();
 
+    public abstract int getCacheTTL();
+
     public void loadIntoCache(Object key) {
         Class<?> expectedType = getIdClassName();
         if (expectedType == null || !expectedType.isInstance(key)) return;
@@ -109,7 +111,10 @@ public abstract class DataAddon {
 
                     String updatedJson = MAPPER.writeValueAsString(updatedNode);
                     dataModel.setValueJson(updatedJson);
-                    NexusApplication.getApplication().getRedisManager().setData(dataModel.getKey(), updatedJson);
+                    NexusApplication.getApplication().getRedisManager().setData(dataModel.getKey(), updatedJson, dataModel.getAddon());
+                    NexusApplication.getApplication().getRedisManager().renewTTL(dataModel.getKey(), getCacheTTL());
+
+
                 }
 
             } catch (Exception e) {
@@ -163,7 +168,7 @@ public abstract class DataAddon {
                     targetModel = createModel(generateRawJson(idValue.toString()));
                     NexusApplication app = NexusApplication.getApplication();
                     app.getDataContainer().addModelDirect(targetModel.getKey(), targetModel);
-                    app.getRedisManager().setData(targetModel.getKey(), targetModel.getValueJson());
+                    app.getRedisManager().setData(targetModel.getKey(), targetModel.getValueJson(), targetModel.getAddon());
                 } else {
                     targetModel = dataModel.get();
                 }
@@ -197,12 +202,14 @@ public abstract class DataAddon {
                     DataModel newModel = createModel(modelInit(rawInput));
                     NexusApplication app = NexusApplication.getApplication();
                     app.getDataContainer().addModelDirect(newModel.getKey(), newModel);
-                    app.getRedisManager().setData(newModel.getKey(), newModel.getValueJson());
+                    app.getRedisManager().setData(newModel.getKey(), newModel.getValueJson(), newModel.getAddon());
                 } else {
                     DataModel existing = dataModel.get();
                     String updated = modelInitComp(rawInput);
                     existing.setValueJson(updated);
-                    NexusApplication.getApplication().getRedisManager().setData(existing.getKey(), updated);
+                    NexusApplication.getApplication().getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
+                    NexusApplication.getApplication().getRedisManager().renewTTL(existing.getKey(), getCacheTTL());
+
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handleSet error", e);
@@ -344,6 +351,7 @@ public abstract class DataAddon {
                 DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
                         modelInitComp(redisJson), this, specificValue);
                 app.getDataContainer().addModelFix(keyTag, m);
+                app.getRedisManager().renewTTL(keyTag, getCacheTTL());
                 return Optional.of(m);
             }
 

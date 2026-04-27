@@ -1,6 +1,8 @@
 package network.darkland.redis;
 
 import network.darkland.NexusApplication;
+import network.darkland.model.DataModel;
+import network.darkland.protocol.DataAddon;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
 import redis.clients.jedis.JedisPoolConfig;
@@ -90,6 +92,19 @@ public class RedisManager {
         poolConfig.setMinIdle(16);
         this.pool = new JedisPool(poolConfig, this.redisHost, 6379);
         System.out.println("Nexus: Connection pool created for host: " + this.redisHost);
+
+        //Config
+        enableKeyspaceNotifications();
+
+    }
+
+    public void enableKeyspaceNotifications() {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.configSet("notify-keyspace-events", "Ex");
+            System.out.println("Nexus: Keyspace Notifications (Expired) enabled via Jedis.");
+        } catch (Exception e) {
+            System.err.println("Nexus: Failed to set Redis config! Yetki sorunu olabilir.");
+        }
     }
 
     public void startListening() {
@@ -113,10 +128,20 @@ public class RedisManager {
         scheduler.scheduleAtFixedRate(task, initialDelay, period, unit);
     }
 
-    public void setData(String key, String json) {
+    public void renewTTL(String key, int seconds) {
         processTask(() -> {
             try (Jedis jedis = pool.getResource()) {
-                SetParams params = new SetParams().ex(600);
+                jedis.expire(key, seconds);
+            } catch (Exception e) {
+                System.err.println("Nexus Error [EXPIRE]: " + key);
+            }
+        });
+    }
+
+    public void setData(String key, String json, DataAddon addon) {
+        processTask(() -> {
+            try (Jedis jedis = pool.getResource()) {
+                SetParams params = new SetParams().ex(addon.getCacheTTL());
                 jedis.set(key, json, params);
             } catch (Exception e) {
                 System.err.println("Nexus Error [SET]: " + key);
@@ -168,5 +193,9 @@ public class RedisManager {
 
     public NexusApplication getApplication() {
         return application;
+    }
+
+    public JedisPool getPool() {
+        return pool;
     }
 }

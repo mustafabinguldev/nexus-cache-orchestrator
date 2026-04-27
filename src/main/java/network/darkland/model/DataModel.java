@@ -42,7 +42,7 @@ public class DataModel {
     public void setValueJson(String valueJson) {
         this.valueJson = valueJson;
 
-        NexusApplication.getApplication().getRedisManager().setData(getKey(), valueJson);
+        NexusApplication.getApplication().getRedisManager().setData(getKey(), valueJson, addon);
         NexusApplication.getApplication().getDataContainer().getDirtyKeys().add(getKey());
 
     }

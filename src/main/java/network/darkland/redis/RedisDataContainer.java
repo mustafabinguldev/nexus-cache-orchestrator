@@ -4,7 +4,10 @@ import net.bytebuddy.dynamic.Nexus;
 import network.darkland.NexusApplication;
 import network.darkland.model.DataModel;
 import network.darkland.protocol.NexusJsonDataContainer;
+import redis.clients.jedis.Jedis;
+import redis.clients.jedis.JedisPubSub;
 
+import javax.xml.crypto.Data;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -70,8 +73,10 @@ public class RedisDataContainer {
         rm.scheduleTask(this::startReconciliationTask,  3,  3, TimeUnit.MINUTES);
 
         rm.scheduleTask(this::sendNetworkLiveBroadcast, 1, 1, TimeUnit.SECONDS);
+        startL1SyncListener();
 
     }
+
 
     private void sendNetworkLiveBroadcast() {
 
@@ -87,6 +92,28 @@ public class RedisDataContainer {
 
     }
 
+
+    public void startL1SyncListener() {
+        new Thread(() -> {
+            String expiredChannel = "__keyevent@0__:expired";
+
+            while (!Thread.currentThread().isInterrupted()) {
+                try (Jedis jedis = NexusApplication.getApplication().getRedisManager().getPool().getResource()) {
+                    jedis.subscribe(new JedisPubSub() {
+                        @Override
+                        public void onMessage(String channel, String message) {
+
+                            removeModel(message);
+                            LOGGER.warning("[Nexus] Key expired: "+message+", Removing from L1 cache to maintain data integrity.");
+
+                        }
+                    }, expiredChannel);
+                } catch (Exception e) {
+                    try { Thread.sleep(5000); } catch (InterruptedException ie) { break; }
+                }
+            }
+        }, "Nexus-L1-Sync-Thread").start();
+    }
 
     private void startL1SyncTask() {
         if (keyToModel.isEmpty()) return;
@@ -105,7 +132,7 @@ public class RedisDataContainer {
                 }
             } else {
                 LOGGER.warning("[L1Sync] Redis key kayıp, restore ediliyor: " + key);
-                rm.setData(key, model.getValueJson());
+                rm.setData(key, model.getValueJson(), model.getAddon());
                 dirtyKeys.add(key);
             }
         }));
@@ -153,7 +180,6 @@ public class RedisDataContainer {
             List<CompletableFuture<?>> batch = new ArrayList<>(RECONCILE_BATCH_SIZE);
 
             for (String key : keys) {
-                // dirty key → flush henüz tamamlanmadı; dokunma
                 if (dirtyKeys.contains(key)) continue;
 
                 DataModel model = keyToModel.get(key);
@@ -166,7 +192,6 @@ public class RedisDataContainer {
                         .getValue(model.getAddon(), model.getSpecificDbKey())
                         .thenAccept(dbJson -> {
                             if (dbJson == null) {
-                                // Mongo'da kayıt yok → Redis'tekini yaz
                                 NexusApplication.getApplication().getMongoManager()
                                         .setValue(model.getAddon(), model.getSpecificDbKey(), redisJson);
                                 return;
@@ -258,6 +283,6 @@ public class RedisDataContainer {
     private void writeToL1AndRedis(String key, DataModel model) {
         keyToModel.put(key, model);
         idToKey.put(model.getId(), key);
-        NexusApplication.getApplication().getRedisManager().setData(key, model.getValueJson());
+        NexusApplication.getApplication().getRedisManager().setData(key, model.getValueJson(), model.getAddon());
     }
 }
