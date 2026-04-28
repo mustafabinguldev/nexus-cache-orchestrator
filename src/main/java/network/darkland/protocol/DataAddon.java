@@ -256,7 +256,10 @@ public abstract class DataAddon {
         });
     }
 
+    /*
     public void handleSet(String source, NexusJsonDataContainer json) {
+
+        System.out.println(json);
         NexusApplication.getApplication().getRedisManager().processTask(() -> {
             try {
                 String rawInput = json.containsKey("data")
@@ -283,6 +286,40 @@ public abstract class DataAddon {
 
 
 
+                }
+            } catch (Exception e) {
+                LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handleSet error", e);
+            }
+        });
+    }*/
+
+    public void handleSet(String source, NexusJsonDataContainer json) {
+        NexusApplication.getApplication().getRedisManager().processTask(() -> {
+            try {
+                String rawInput = json.containsKey("data")
+                        ? JsonUtils.toJson(json.get("data", Object.class))
+                        : json.toFullJson();
+
+                if (rawInput == null || !rawInput.trim().startsWith("{")) {
+                    LOGGER.warning("[DataAddon/" + addonName() + "] source=" + source);
+                    return;
+                }
+
+                Optional<DataModel> dataModel = getData(json);
+
+                if (dataModel.isEmpty()) {
+                    DataModel newModel = createModel(modelInit(rawInput));
+                    NexusApplication app = NexusApplication.getApplication();
+                    app.getDataContainer().addModelDirect(newModel.getKey(), newModel);
+                    app.getRedisManager().setData(newModel.getKey(), newModel.getValueJson(), newModel.getAddon());
+                    pushMetrics(new NexusJsonDataContainer(newModel.getValueJson()));
+                } else {
+                    DataModel existing = dataModel.get();
+                    String updated = modelInitComp(rawInput);
+                    existing.setValueJson(updated);
+                    NexusApplication.getApplication().getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
+                    NexusApplication.getApplication().getRedisManager().renewTTL(existing.getKey(), getCacheTTL());
+                    pushMetrics(new NexusJsonDataContainer(existing.getValueJson()));
                 }
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handleSet error", e);
@@ -402,6 +439,7 @@ public abstract class DataAddon {
         return cachedIdClass;
     }
 
+    /*
     public Optional<DataModel> getData(NexusJsonDataContainer dataContainer) {
         try {
             NexusJsonDataContainer work = dataContainer.containsKey("data")
@@ -441,6 +479,55 @@ public abstract class DataAddon {
 
                 pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
 
+                return Optional.of(m);
+            }
+
+        } catch (Exception e) {
+            LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] getData error", e);
+        }
+        return Optional.empty();
+    }*/
+
+    public Optional<DataModel> getData(NexusJsonDataContainer dataContainer) {
+        try {
+            NexusJsonDataContainer work = dataContainer.containsKey("data")
+                    ? new NexusJsonDataContainer(JsonUtils.toJson(dataContainer.get("data", Object.class)))
+                    : dataContainer;
+
+            String specificValue = getSpecificDbKeyFromJsonKeyToValue(work);
+            if (specificValue.isEmpty() || "null".equals(specificValue)) return Optional.empty();
+
+            String keyTag = cacheKeyHeaderTag() + "_" + specificValue;
+            NexusApplication app = NexusApplication.getApplication();
+
+            Optional<DataModel> l1 = app.getDataContainer().getDataModelFromKey(keyTag);
+            if (l1.isPresent()) {
+                pushMetrics(new NexusJsonDataContainer(l1.get().getValueJson()));
+                return l1;
+            }
+
+            if (app.getRedisManager().exists(keyTag)) {
+                String redisJson = app.getRedisManager().getData(keyTag).get();
+
+                if (redisJson == null || !redisJson.trim().startsWith("{")) {
+                    LOGGER.warning("[DataAddon/" + addonName() + "] Redis'te bozuk/binary veri tespit edildi, siliniyor. key=" + keyTag);
+                    app.getRedisManager().deleteData(keyTag);
+                } else {
+                    DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
+                            modelInitComp(redisJson), this, specificValue);
+                    app.getDataContainer().addModelFix(keyTag, m);
+                    app.getRedisManager().renewTTL(keyTag, getCacheTTL());
+                    pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
+                    return Optional.of(m);
+                }
+            }
+
+            String dbJson = app.getMongoManager().getValue(this, specificValue).join();
+            if (dbJson != null) {
+                DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
+                        modelInitComp(dbJson), this, specificValue);
+                app.getDataContainer().addModel(keyTag, m);
+                pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
                 return Optional.of(m);
             }
 
