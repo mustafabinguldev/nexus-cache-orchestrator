@@ -1,5 +1,5 @@
 # ⬡ NEXUS CORE
-### Advanced Asynchronous Data Orchestration Engine `v1.2.0`
+### Advanced Asynchronous Data Orchestration Engine `v1.3.0`
 
 > *"The central brain between your distributed Minecraft infrastructure and your persistent data layer."*
 
