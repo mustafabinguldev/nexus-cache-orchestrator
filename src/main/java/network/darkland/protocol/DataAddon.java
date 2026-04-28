@@ -5,6 +5,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.influxdb.client.domain.WritePrecision;
+import com.influxdb.client.write.Point;
+import network.darkland.Influxdb.annotations.NexusMetric;
+import network.darkland.Influxdb.annotations.NexusMetricConfig;
 import network.darkland.NexusApplication;
 import network.darkland.model.DataModel;
 import network.darkland.protocol.backup.annotations.DbDataModels;
@@ -14,8 +18,11 @@ import network.darkland.util.JsonUtils;
 import network.darkland.util.NexusJsonBuilder;
 
 import java.lang.reflect.Field;
+import java.time.Instant;
+import java.util.HashMap;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Level;
 import java.util.logging.Logger;
@@ -50,6 +57,63 @@ public abstract class DataAddon {
     public abstract String getCollection();
 
     public abstract int getCacheTTL();
+
+    public void pushMetrics(NexusJsonDataContainer currentData) {
+
+        if (!getClass().isAnnotationPresent(NexusMetricConfig.class)) {
+            return;
+        }
+
+        NexusMetricConfig metricConfig = getClass().getAnnotation(NexusMetricConfig.class);
+        String measurement;
+        if (!metricConfig.enabled()) {
+            return;
+        }
+        if (metricConfig.customMeasurement().equals("")) {
+            measurement = getClass().getName();
+        }else {
+            measurement = metricConfig.customMeasurement();
+        }
+        Point point = Point.measurement(measurement).addTag(getIdFieldName(),
+                getSpecificDbKeyFromJsonKeyToValue(currentData));
+        point.time(Instant.now(), WritePrecision.NS);
+
+        HashMap<String, Object> fields = new HashMap<>();
+
+        for (Field field : getClass().getDeclaredFields()) {
+
+            if (field.getName().equals(getIdFieldName())) {
+                continue;
+            }
+
+            if (!field.isAnnotationPresent(NexusMetric.class)) {
+                continue;
+            }
+
+            String fieldName = field.getName();
+            if (!currentData.containsKey(fieldName)) continue;
+            Object object = currentData.get(fieldName, Object.class);
+            NexusMetric metric = field.getAnnotation(NexusMetric.class);
+
+            String dataKey;
+            if (metric.value().equals("")) {
+                dataKey = fieldName;
+            }else{
+                dataKey = metric.value();
+            }
+
+            if (metric.isTag()) {
+                point.addTag(dataKey, object.toString());
+            }
+
+            fields.put(dataKey, object);
+        }
+
+        point.addFields(fields);
+        CompletableFuture.runAsync(() -> {
+            NexusApplication.getApplication().getInfluxDBManager().write(point);
+        });
+    }
 
     public void loadIntoCache(Object key) {
         Class<?> expectedType = getIdClassName();
@@ -113,6 +177,9 @@ public abstract class DataAddon {
                     dataModel.setValueJson(updatedJson);
                     NexusApplication.getApplication().getRedisManager().setData(dataModel.getKey(), updatedJson, dataModel.getAddon());
                     NexusApplication.getApplication().getRedisManager().renewTTL(dataModel.getKey(), getCacheTTL());
+
+                    pushMetrics(new NexusJsonDataContainer(dataModel.getValueJson()));
+
 
 
                 }
@@ -203,12 +270,18 @@ public abstract class DataAddon {
                     NexusApplication app = NexusApplication.getApplication();
                     app.getDataContainer().addModelDirect(newModel.getKey(), newModel);
                     app.getRedisManager().setData(newModel.getKey(), newModel.getValueJson(), newModel.getAddon());
+
+                    pushMetrics(new NexusJsonDataContainer(newModel.getValueJson()));
+
                 } else {
                     DataModel existing = dataModel.get();
                     String updated = modelInitComp(rawInput);
                     existing.setValueJson(updated);
                     NexusApplication.getApplication().getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
                     NexusApplication.getApplication().getRedisManager().renewTTL(existing.getKey(), getCacheTTL());
+                    pushMetrics(new NexusJsonDataContainer(existing.getValueJson()));
+
+
 
                 }
             } catch (Exception e) {
@@ -343,6 +416,8 @@ public abstract class DataAddon {
 
             Optional<DataModel> l1 = app.getDataContainer().getDataModelFromKey(keyTag);
             if (l1.isPresent()) {
+
+                pushMetrics(new NexusJsonDataContainer(l1.get().getValueJson()));
                 return l1;
             }
 
@@ -352,6 +427,9 @@ public abstract class DataAddon {
                         modelInitComp(redisJson), this, specificValue);
                 app.getDataContainer().addModelFix(keyTag, m);
                 app.getRedisManager().renewTTL(keyTag, getCacheTTL());
+
+                pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
+
                 return Optional.of(m);
             }
 
@@ -360,6 +438,9 @@ public abstract class DataAddon {
                 DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
                         modelInitComp(dbJson), this, specificValue);
                 app.getDataContainer().addModel(keyTag, m);
+
+                pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
+
                 return Optional.of(m);
             }
 

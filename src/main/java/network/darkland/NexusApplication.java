@@ -1,5 +1,6 @@
 package network.darkland;
 
+import network.darkland.Influxdb.InfluxDBManager;
 import network.darkland.mongo.MongoManager;
 import network.darkland.protocol.DataAddon;
 import network.darkland.protocol.ProtocolHandler;
@@ -27,8 +28,11 @@ public class NexusApplication {
     private MongoManager mongoManager;
 
 
+    private InfluxDBManager influxDBManager;
+
+
     private static NexusApplication application;
-    public NexusApplication(String redisHost, String mongoUri) {
+    public NexusApplication(String redisHost, String mongoUri, boolean isMetricsEnabled, String influxUrl, String influxToken, String influxOrg, String influxBucket) {
         application = this;
         this.redisManager = new RedisManager(this, redisHost);
         this.protocolHandler = new ProtocolHandler();
@@ -44,6 +48,13 @@ public class NexusApplication {
             System.out.println("Loaded Addons: None");
         } else {
             System.out.println("Loaded Addons: " + String.join(", ", names));
+        }
+
+        if (isMetricsEnabled) {
+            influxDBManager = new
+                    InfluxDBManager(influxUrl,
+                    influxToken.toCharArray(),
+                    influxOrg, influxBucket);
         }
 
     }
@@ -133,4 +144,7 @@ public class NexusApplication {
         return protocolHandler.getAddondsNames().size();
     }
 
+    public InfluxDBManager getInfluxDBManager() {
+        return influxDBManager;
+    }
 }

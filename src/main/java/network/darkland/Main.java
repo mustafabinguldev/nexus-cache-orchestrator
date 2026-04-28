@@ -1,5 +1,7 @@
 package network.darkland;
 
+import com.influxdb.client.domain.WritePrecision;
+
 import javax.swing.*;
 import javax.swing.Timer;
 import javax.swing.border.*;
@@ -10,9 +12,11 @@ import java.awt.geom.*;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.lang.management.ManagementFactory;
+import java.time.Instant;
 import java.time.LocalTime;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 public class Main {
 
@@ -96,8 +100,8 @@ public class Main {
             }
         };
         card.setOpaque(false);
-        card.setPreferredSize(new Dimension(450, 500));
-        card.setBorder(new EmptyBorder(44, 50, 44, 50));
+        card.setPreferredSize(new Dimension(450, 620));
+        card.setBorder(new EmptyBorder(30, 50, 30, 50));
 
         GridBagConstraints c = new GridBagConstraints();
         c.fill = GridBagConstraints.HORIZONTAL;
@@ -109,32 +113,85 @@ public class Main {
 
         JLabel sub = lbl("INDUSTRIAL CONTROL  //  v4.0", 10, TEXT_LO, false);
         sub.setHorizontalAlignment(SwingConstants.CENTER);
-        c.gridy=1; c.insets=new Insets(0,0,28,0); card.add(sub, c);
+        c.gridy=1; c.insets=new Insets(0,0,20,0); card.add(sub, c);
 
-        c.gridy=2; c.insets=new Insets(0,0,22,0); card.add(new FadeLine(CYAN), c);
+        c.gridy=2; c.insets=new Insets(0,0,15,0); card.add(new FadeLine(CYAN), c);
 
-        c.insets=new Insets(7,0,7,0);
-        NField rField = new NField("127.0.0.1",               "REDIS HOST",  CYAN);
-        NField mField = new NField("mongodb://localhost:27017","MONGO URI",   BLUE);
-        NField pField = new NField("8080",                    "SERVER PORT", GREEN);
+        c.insets=new Insets(5,0,5,0);
+        NField rField = new NField("127.0.0.1", "REDIS HOST", CYAN);
+        NField mField = new NField("mongodb://localhost:27017", "MONGO URI", BLUE);
         c.gridy=3; card.add(rField, c);
         c.gridy=4; card.add(mField, c);
-        c.gridy=5; card.add(pField, c);
+
+        JCheckBox metricsTick = new JCheckBox("ENABLE NEXUS METRICS (INFLUXDB)");
+        metricsTick.setForeground(CYAN);
+        metricsTick.setOpaque(false);
+        metricsTick.setFocusPainted(false);
+        metricsTick.setFont(new Font("Monospaced", Font.BOLD, 11));
+        c.gridy=5; c.insets=new Insets(15,0,5,0); card.add(metricsTick, c);
 
         NBtn btn = new NBtn("INITIALIZE NEXUS ENGINE", CYAN);
         btn.setPreferredSize(new Dimension(0, 52));
-        c.gridy=6; c.insets=new Insets(26,0,0,0); card.add(btn, c);
+        c.gridy=6; c.insets=new Insets(20,0,0,0); card.add(btn, c);
 
-        JLabel footer = lbl("AUTHORIZED ACCESS ONLY  —  NEXUS SYSTEMS", 9, TEXT_LO, false);
+        JLabel footer = lbl("AUTHORIZED ACCESS ONLY — NEXUS SYSTEMS", 9, TEXT_LO, false);
         footer.setHorizontalAlignment(SwingConstants.CENTER);
-        c.gridy=7; c.insets=new Insets(18,0,0,0); card.add(footer, c);
+        c.gridy=7; c.insets=new Insets(15,0,0,0); card.add(footer, c);
 
         btn.addActionListener(e -> {
+            final String[][] influxStorage = { null };
+
+            if (metricsTick.isSelected()) {
+                JPanel influxForm = new JPanel(new GridLayout(0, 1, 2, 8));
+                influxForm.setBackground(CARD);
+                influxForm.setBorder(new EmptyBorder(10,10,10,10));
+
+                JTextField urlF = new JTextField("http://localhost:8086");
+                JTextField tokenF = new JTextField("TOKEN_KEY");
+                JTextField orgF = new JTextField("NEXUS_ORG");
+                JTextField bucketF = new JTextField("nexus_metrics");
+
+                influxForm.add(lbl("INFLUXDB ENDPOINT", 10, CYAN, true)); influxForm.add(urlF);
+                influxForm.add(lbl("AUTH TOKEN", 10, CYAN, true)); influxForm.add(tokenF);
+                influxForm.add(lbl("ORGANIZATION", 10, CYAN, true)); influxForm.add(orgF);
+                influxForm.add(lbl("BUCKET NAME", 10, CYAN, true)); influxForm.add(bucketF);
+
+                int option = JOptionPane.showConfirmDialog(frame, influxForm,
+                        "METRICS CONFIGURATION", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
+
+                if (option == JOptionPane.OK_OPTION) {
+                    influxStorage[0] = new String[]{
+                            urlF.getText(), tokenF.getText(), orgF.getText(), bucketF.getText()
+                    };
+                } else {
+                    return;
+                }
+            }
+
             btn.setEnabled(false); btn.label = "CONNECTING..."; btn.repaint();
+
             new Thread(() -> {
                 try {
                     redirectOut();
-                    new NexusApplication(rField.val(), mField.val());
+
+                    String url = null, token = null, org = null, bucket = null;
+
+                    if (influxStorage[0] != null) {
+                        url = influxStorage[0][0];
+                        token = influxStorage[0][1];
+                        org = influxStorage[0][2];
+                        bucket = influxStorage[0][3];
+                    }
+                    new NexusApplication(
+                            rField.val(),
+                            mField.val(),
+                            metricsTick.isSelected(),
+                            url,
+                            token,
+                            org,
+                            bucket
+                    );
+
                     SwingUtilities.invokeLater(() -> {
                         cardLayout.show(mainPanel, "DASH");
                         startTimers(); goOnline();
@@ -152,7 +209,6 @@ public class Main {
         outer.add(card);
         return outer;
     }
-
     private static JPanel dashboardPanel() {
         JPanel root = new JPanel(new BorderLayout(0,0));
         root.setOpaque(false);
@@ -308,6 +364,16 @@ public class Main {
                 final double fc = cpu;
                 final long   fm = mb;
                 final int    fr = rp;
+
+                com.influxdb.client.write.Point point = com.influxdb.client.write.Point.measurement("nexus_metric");
+                point.addField("ram", fm);
+                point.addField("cpu", fc);
+                point.addField("dataSize", ca);
+                point.time(Instant.now(), WritePrecision.NS);
+
+                CompletableFuture.runAsync(() -> {
+                    NexusApplication.getApplication().getInfluxDBManager().write(point);
+                });
 
                 SwingUtilities.invokeLater(() -> {
                     cpuCard  .set((int)fc, String.format("%.1f%%", fc));
