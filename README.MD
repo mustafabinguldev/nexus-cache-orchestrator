@@ -1,5 +1,5 @@
 # ⬡ NEXUS CORE
-### Central Data Orchestrator for Distributed Minecraft Servers (Redis + MongoDB)`
+### Central Data Orchestrator for Distributed Minecraft Servers (Redis + MongoDB)
 
 > *"The central brain between your distributed Minecraft infrastructure and your persistent data layer."*
 
