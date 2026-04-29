@@ -1,5 +1,4 @@
-# ⬡ NEXUS CORE
-### Advanced Asynchronous Data Orchestration Engine `v1.3.0`
+### Central Data Orchestrator for Distributed Minecraft Servers (Redis + MongoDB)
 
 > *"The central brain between your distributed Minecraft infrastructure and your persistent data layer."*
 
