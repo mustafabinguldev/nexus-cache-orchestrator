@@ -1,6 +1,7 @@
 package network.darkland;
 
 import com.influxdb.client.domain.WritePrecision;
+import org.json.JSONObject;
 
 import javax.swing.*;
 import javax.swing.Timer;
@@ -9,9 +10,9 @@ import javax.swing.text.*;
 import java.awt.*;
 import java.awt.event.*;
 import java.awt.geom.*;
-import java.io.OutputStream;
-import java.io.PrintStream;
+import java.io.*;
 import java.lang.management.ManagementFactory;
+import java.nio.file.*;
 import java.time.Instant;
 import java.time.LocalTime;
 import java.util.*;
@@ -30,6 +31,8 @@ public class Main {
     private static JLabel     statusDot, clockLabel, uptimeLabel;
     private static long       bootTime = System.currentTimeMillis();
 
+    private static final Path CONFIG_PATH = Paths.get("config.json");
+
     static final Color BG          = new Color(5,   7,  14);
     static final Color CARD        = new Color(10,  15,  26);
     static final Color CARD2       = new Color(13,  20,  34);
@@ -46,6 +49,46 @@ public class Main {
     static final Color TEXT_MID    = new Color(105, 135, 180);
     static final Color TEXT_LO     = new Color( 45,  62,  95);
     static final Color SCAN        = new Color(255, 255, 255,   3);
+
+
+    private static JSONObject loadConfig() {
+        if (!Files.exists(CONFIG_PATH)) return null;
+        try {
+            String raw = new String(Files.readAllBytes(CONFIG_PATH));
+            return new JSONObject(raw);
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static void saveConfig(String redisHost,
+                                   String mongoUri,
+                                   boolean metricsEnabled,
+                                   String influxUrl,
+                                   String influxToken,
+                                   String influxOrg,
+                                   String influxBucket) {
+        try {
+            JSONObject cfg = new JSONObject();
+            cfg.put("redisHost",       redisHost);
+            cfg.put("mongoUri",        mongoUri);
+            cfg.put("metricsEnabled",  metricsEnabled);
+            if (metricsEnabled && influxUrl != null) {
+                JSONObject influx = new JSONObject();
+                influx.put("url",    influxUrl);
+                influx.put("token",  influxToken);
+                influx.put("org",    influxOrg);
+                influx.put("bucket", influxBucket);
+                cfg.put("influx", influx);
+            }
+            Files.write(CONFIG_PATH,
+                    cfg.toString(2).getBytes(),
+                    StandardOpenOption.CREATE,
+                    StandardOpenOption.TRUNCATE_EXISTING);
+        } catch (Exception e) {
+            System.err.println("[WARN] config.json kaydedilemedi: " + e.getMessage());
+        }
+    }
 
     public static void main(String[] args) {
         try {
@@ -74,8 +117,62 @@ public class Main {
         mainPanel.add(dashboardPanel(), "DASH");
 
         bg.add(mainPanel, BorderLayout.CENTER);
-        cardLayout.show(mainPanel, "LOGIN");
-        frame.setVisible(true);
+
+        JSONObject cfg = loadConfig();
+        if (cfg != null) {
+            cardLayout.show(mainPanel, "LOGIN");
+            frame.setVisible(true);
+            autoConnect(cfg);
+        } else {
+            cardLayout.show(mainPanel, "LOGIN");
+            frame.setVisible(true);
+        }
+    }
+
+    private static void autoConnect(JSONObject cfg) {
+        String redisHost      = cfg.optString("redisHost",  "127.0.0.1");
+        String mongoUri       = cfg.optString("mongoUri",   "mongodb://localhost:27017");
+        boolean metricsEnabled = cfg.optBoolean("metricsEnabled", false);
+
+        String influxUrl    = null;
+        String influxToken  = null;
+        String influxOrg    = null;
+        String influxBucket = null;
+
+        if (metricsEnabled && cfg.has("influx")) {
+            JSONObject influx = cfg.getJSONObject("influx");
+            influxUrl    = influx.optString("url");
+            influxToken  = influx.optString("token");
+            influxOrg    = influx.optString("org");
+            influxBucket = influx.optString("bucket");
+        }
+
+        final String fRedis   = redisHost;
+        final String fMongo   = mongoUri;
+        final boolean fMetrics = metricsEnabled;
+        final String fUrl     = influxUrl;
+        final String fToken   = influxToken;
+        final String fOrg     = influxOrg;
+        final String fBucket  = influxBucket;
+
+        new Thread(() -> {
+            try {
+                redirectOut();
+                new NexusApplication(fRedis, fMongo, fMetrics, fUrl, fToken, fOrg, fBucket);
+                SwingUtilities.invokeLater(() -> {
+                    cardLayout.show(mainPanel, "DASH");
+                    startTimers();
+                    goOnline();
+                });
+            } catch (Exception ex) {
+                SwingUtilities.invokeLater(() -> {
+                    cardLayout.show(mainPanel, "LOGIN");
+                    JOptionPane.showMessageDialog(frame,
+                            "Auto-connect failed, please login manually.\n" + ex.getMessage(),
+                            "CONNECTION ERROR", JOptionPane.ERROR_MESSAGE);
+                });
+            }
+        }).start();
     }
 
     private static JPanel loginPanel() {
@@ -117,13 +214,20 @@ public class Main {
 
         c.gridy=2; c.insets=new Insets(0,0,15,0); card.add(new FadeLine(CYAN), c);
 
+        // Config varsa alanları önceden doldur
+        JSONObject existingCfg = loadConfig();
+        String defaultRedis = existingCfg != null ? existingCfg.optString("redisHost", "127.0.0.1")    : "127.0.0.1";
+        String defaultMongo = existingCfg != null ? existingCfg.optString("mongoUri",  "mongodb://localhost:27017") : "mongodb://localhost:27017";
+        boolean defaultMetrics = existingCfg != null && existingCfg.optBoolean("metricsEnabled", false);
+
         c.insets=new Insets(5,0,5,0);
-        NField rField = new NField("127.0.0.1", "REDIS HOST", CYAN);
-        NField mField = new NField("mongodb://localhost:27017", "MONGO URI", BLUE);
+        NField rField = new NField(defaultRedis, "REDIS HOST", CYAN);
+        NField mField = new NField(defaultMongo, "MONGO URI", BLUE);
         c.gridy=3; card.add(rField, c);
         c.gridy=4; card.add(mField, c);
 
         JCheckBox metricsTick = new JCheckBox("ENABLE NEXUS METRICS (INFLUXDB)");
+        metricsTick.setSelected(defaultMetrics);
         metricsTick.setForeground(CYAN);
         metricsTick.setOpaque(false);
         metricsTick.setFocusPainted(false);
@@ -142,19 +246,33 @@ public class Main {
             final String[][] influxStorage = { null };
 
             if (metricsTick.isSelected()) {
+                // Önceki influx ayarlarını doldur
+                String prevUrl    = "http://localhost:8086";
+                String prevToken  = "TOKEN_KEY";
+                String prevOrg    = "NEXUS_ORG";
+                String prevBucket = "nexus_metrics";
+
+                if (existingCfg != null && existingCfg.has("influx")) {
+                    JSONObject inf = existingCfg.getJSONObject("influx");
+                    prevUrl    = inf.optString("url",    prevUrl);
+                    prevToken  = inf.optString("token",  prevToken);
+                    prevOrg    = inf.optString("org",    prevOrg);
+                    prevBucket = inf.optString("bucket", prevBucket);
+                }
+
                 JPanel influxForm = new JPanel(new GridLayout(0, 1, 2, 8));
                 influxForm.setBackground(CARD);
                 influxForm.setBorder(new EmptyBorder(10,10,10,10));
 
-                JTextField urlF = new JTextField("http://localhost:8086");
-                JTextField tokenF = new JTextField("TOKEN_KEY");
-                JTextField orgF = new JTextField("NEXUS_ORG");
-                JTextField bucketF = new JTextField("nexus_metrics");
+                JTextField urlF    = new JTextField(prevUrl);
+                JTextField tokenF  = new JTextField(prevToken);
+                JTextField orgF    = new JTextField(prevOrg);
+                JTextField bucketF = new JTextField(prevBucket);
 
                 influxForm.add(lbl("INFLUXDB ENDPOINT", 10, CYAN, true)); influxForm.add(urlF);
-                influxForm.add(lbl("AUTH TOKEN", 10, CYAN, true)); influxForm.add(tokenF);
-                influxForm.add(lbl("ORGANIZATION", 10, CYAN, true)); influxForm.add(orgF);
-                influxForm.add(lbl("BUCKET NAME", 10, CYAN, true)); influxForm.add(bucketF);
+                influxForm.add(lbl("AUTH TOKEN", 10, CYAN, true));        influxForm.add(tokenF);
+                influxForm.add(lbl("ORGANIZATION", 10, CYAN, true));      influxForm.add(orgF);
+                influxForm.add(lbl("BUCKET NAME", 10, CYAN, true));       influxForm.add(bucketF);
 
                 int option = JOptionPane.showConfirmDialog(frame, influxForm,
                         "METRICS CONFIGURATION", JOptionPane.OK_CANCEL_OPTION, JOptionPane.PLAIN_MESSAGE);
@@ -177,24 +295,26 @@ public class Main {
                     String url = null, token = null, org = null, bucket = null;
 
                     if (influxStorage[0] != null) {
-                        url = influxStorage[0][0];
-                        token = influxStorage[0][1];
-                        org = influxStorage[0][2];
+                        url    = influxStorage[0][0];
+                        token  = influxStorage[0][1];
+                        org    = influxStorage[0][2];
                         bucket = influxStorage[0][3];
                     }
+
                     new NexusApplication(
                             rField.val(),
                             mField.val(),
                             metricsTick.isSelected(),
-                            url,
-                            token,
-                            org,
-                            bucket
+                            url, token, org, bucket
                     );
+
+                    saveConfig(rField.val(), mField.val(), metricsTick.isSelected(),
+                            url, token, org, bucket);
 
                     SwingUtilities.invokeLater(() -> {
                         cardLayout.show(mainPanel, "DASH");
-                        startTimers(); goOnline();
+                        startTimers();
+                        goOnline();
                     });
                 } catch (Exception ex) {
                     SwingUtilities.invokeLater(() -> {
@@ -209,6 +329,7 @@ public class Main {
         outer.add(card);
         return outer;
     }
+
     private static JPanel dashboardPanel() {
         JPanel root = new JPanel(new BorderLayout(0,0));
         root.setOpaque(false);
@@ -393,6 +514,8 @@ public class Main {
         statusDot.setText("● ONLINE"); statusDot.setForeground(GREEN);
         bootTime = System.currentTimeMillis();
     }
+
+    // ─────────────────────── Inner Classes (değişmedi) ────────────────────────
 
     static class DonutCard extends JPanel {
         private final String title;

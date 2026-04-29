@@ -97,6 +97,11 @@
             <artifactId>influxdb-client-java</artifactId>
             <version>6.10.0</version>
         </dependency>
+        <dependency>
+            <groupId>org.json</groupId>
+            <artifactId>json</artifactId>
+            <version>20240303</version>
+        </dependency>
     </dependencies>
 
     <repositories>
