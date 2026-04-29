@@ -1,10 +1,13 @@
 package network.darkland.mongo;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.ReplaceOptions;
+import com.mongodb.client.model.Sorts;
 import network.darkland.protocol.DataAddon;
+import network.darkland.protocol.NexusJsonDataContainer;
 import org.bson.Document;
 
 import java.util.concurrent.CompletableFuture;
@@ -57,4 +60,52 @@ public class MongoManager {
             );
         });
     }
+
+
+    public CompletableFuture<java.util.Map<Integer, Object>> getRanking(DataAddon addon, String fieldName, String orderType, int limitCount) {
+        return CompletableFuture.supplyAsync(() -> {
+
+            java.util.Map<Integer, Object> rankingMap = new java.util.LinkedHashMap<>();
+
+            var sortOrder = orderType.equalsIgnoreCase("DESC")
+                    ? Sorts.descending(fieldName)
+                    : Sorts.ascending(fieldName);
+
+            java.util.concurrent.atomic.AtomicInteger rank = new java.util.concurrent.atomic.AtomicInteger(1);
+
+            client.getDatabase(addon.getDatabase())
+                    .getCollection(addon.getCollection())
+                    .find()
+                    .sort(sortOrder)
+                    .limit(limitCount)
+                    .forEach(doc -> {
+                        doc.remove("_id");
+                        rankingMap.put(rank.getAndIncrement(), doc);
+                    });
+
+            return rankingMap;
+        });
+    }
+
+    public CompletableFuture<Integer> getPosition(DataAddon addon, String key, String fieldName, String orderType) {
+        return CompletableFuture.supplyAsync(() -> {
+            var collection = client.getDatabase(addon.getDatabase())
+                    .getCollection(addon.getCollection());
+
+            Document playerDoc = collection.find(Filters.eq(addon.getIdFieldName(), key)).first();
+
+            if (playerDoc == null || !playerDoc.containsKey(fieldName)) return -1;
+
+            Object value = playerDoc.get(fieldName);
+
+            var filter = orderType.equalsIgnoreCase("DESC")
+                    ? Filters.gt(fieldName, value)
+                    : Filters.lt(fieldName, value);
+
+            long countAhead = collection.countDocuments(filter);
+
+            return (int) (countAhead + 1);
+        });
+    }
+
 }

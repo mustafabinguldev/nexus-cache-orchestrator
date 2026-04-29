@@ -130,6 +130,61 @@ public abstract class DataAddon {
 
     }
 
+    public void handleRankFinderData(String source, NexusJsonDataContainer json) {
+
+        NexusApplication.getApplication().getRedisManager().processTask(() -> {
+
+            if (!json.containsKey("field") || !json.containsKey("key") || !json.containsKey("order")) return;
+
+            String field = json.get("field", String.class);
+            String key = json.get("key", String.class);
+            String order = json.get("order", String.class);
+
+            NexusApplication.getApplication().getMongoManager().getPosition(this, key, field, order)
+                    .thenAccept(position -> {
+                        NexusJsonDataContainer response = new NexusJsonDataContainer();
+                        response.set("protocol", addonId());
+                        response.set("type", "RANK_FINDER_RESPONSE");
+                        response.set("target", source);
+                        response.set("key", key);
+                        response.set("position", position);
+                        String responseJson = response.toFullJson();
+                        NexusApplication.getApplication().getRedisManager().publish(RedisManager.CHANNEL + "_" + source, responseJson);
+                    });
+        });
+    }
+
+
+    public void handleRankingData(String source, NexusJsonDataContainer json) {
+        NexusApplication.getApplication().getRedisManager().processTask(() -> {
+            if (!json.containsKey("field") || !json.containsKey("order") || !json.containsKey("limit")) {
+                return;
+            }
+
+            String field = json.get("field", String.class);
+            String order = json.get("order", String.class);
+            int limit = json.get("limit", Integer.class);
+
+            NexusApplication.getApplication().getMongoManager().getRanking(this, field, order, limit)
+                    .thenAccept(rankingMap -> {
+
+                        NexusJsonDataContainer response = new NexusJsonDataContainer();
+                        response.set("protocol", addonId());
+                        response.set("type", "RANKING_RESPONSE");
+                        response.set("target", source);
+                        response.set("response", rankingMap);
+
+                        String responseJson = response.toFullJson();
+                        NexusApplication.getApplication().getRedisManager().publish(RedisManager.CHANNEL + "_" + source, responseJson);
+
+                    })
+                    .exceptionally(ex -> {
+                        ex.printStackTrace();
+                        return null;
+                    });
+        });
+    }
+
     public void handleIncrementData(String source, NexusJsonDataContainer json) {
         NexusApplication.getApplication().getRedisManager().processTask(() -> {
             try {
@@ -256,42 +311,6 @@ public abstract class DataAddon {
         });
     }
 
-    /*
-    public void handleSet(String source, NexusJsonDataContainer json) {
-
-        System.out.println(json);
-        NexusApplication.getApplication().getRedisManager().processTask(() -> {
-            try {
-                String rawInput = json.containsKey("data")
-                        ? JsonUtils.toJson(json.get("data", Object.class))
-                        : json.toFullJson();
-
-                Optional<DataModel> dataModel = getData(json);
-
-                if (dataModel.isEmpty()) {
-                    DataModel newModel = createModel(modelInit(rawInput));
-                    NexusApplication app = NexusApplication.getApplication();
-                    app.getDataContainer().addModelDirect(newModel.getKey(), newModel);
-                    app.getRedisManager().setData(newModel.getKey(), newModel.getValueJson(), newModel.getAddon());
-
-                    pushMetrics(new NexusJsonDataContainer(newModel.getValueJson()));
-
-                } else {
-                    DataModel existing = dataModel.get();
-                    String updated = modelInitComp(rawInput);
-                    existing.setValueJson(updated);
-                    NexusApplication.getApplication().getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
-                    NexusApplication.getApplication().getRedisManager().renewTTL(existing.getKey(), getCacheTTL());
-                    pushMetrics(new NexusJsonDataContainer(existing.getValueJson()));
-
-
-
-                }
-            } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handleSet error", e);
-            }
-        });
-    }*/
 
     public void handleSet(String source, NexusJsonDataContainer json) {
         NexusApplication.getApplication().getRedisManager().processTask(() -> {
@@ -439,55 +458,6 @@ public abstract class DataAddon {
         return cachedIdClass;
     }
 
-    /*
-    public Optional<DataModel> getData(NexusJsonDataContainer dataContainer) {
-        try {
-            NexusJsonDataContainer work = dataContainer.containsKey("data")
-                    ? new NexusJsonDataContainer(JsonUtils.toJson(dataContainer.get("data", Object.class)))
-                    : dataContainer;
-
-            String specificValue = getSpecificDbKeyFromJsonKeyToValue(work);
-            if (specificValue.isEmpty() || "null".equals(specificValue)) return Optional.empty();
-
-            String keyTag = cacheKeyHeaderTag() + "_" + specificValue;
-            NexusApplication app = NexusApplication.getApplication();
-
-            Optional<DataModel> l1 = app.getDataContainer().getDataModelFromKey(keyTag);
-            if (l1.isPresent()) {
-
-                pushMetrics(new NexusJsonDataContainer(l1.get().getValueJson()));
-                return l1;
-            }
-
-            if (app.getRedisManager().exists(keyTag)) {
-                String redisJson = app.getRedisManager().getData(keyTag).get();
-                DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
-                        modelInitComp(redisJson), this, specificValue);
-                app.getDataContainer().addModelFix(keyTag, m);
-                app.getRedisManager().renewTTL(keyTag, getCacheTTL());
-
-                pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
-
-                return Optional.of(m);
-            }
-
-            String dbJson = app.getMongoManager().getValue(this, specificValue).join();
-            if (dbJson != null) {
-                DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
-                        modelInitComp(dbJson), this, specificValue);
-                app.getDataContainer().addModel(keyTag, m);
-
-                pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
-
-                return Optional.of(m);
-            }
-
-        } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] getData error", e);
-        }
-        return Optional.empty();
-    }*/
-
     public Optional<DataModel> getData(NexusJsonDataContainer dataContainer) {
         try {
             NexusJsonDataContainer work = dataContainer.containsKey("data")
@@ -557,6 +527,6 @@ public abstract class DataAddon {
     }
 
     public enum RequestType {
-        SET_DATA, GET_DATA, UPDATE_DATA, REMOVE_DATA, BROADCAST, LOAD_CACHE, INCREMENT_DATA, LIVE
+        SET_DATA, GET_DATA, UPDATE_DATA, REMOVE_DATA, BROADCAST, LOAD_CACHE, INCREMENT_DATA, LIVE, RANKING, RANK_FINDER
     }
 }

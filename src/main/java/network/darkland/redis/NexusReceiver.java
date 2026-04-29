@@ -55,6 +55,7 @@ public class NexusReceiver extends JedisPubSub {
                 return;
             }
 
+
             if (!dataContainer.containsKey(FIELD_PROTOCOL) || !dataContainer.containsKey(FIELD_SOURCE)) {
                 LOGGER.fine("Message is missing required 'protocol' or 'source' field, skipping.");
                 return;
@@ -110,10 +111,14 @@ public class NexusReceiver extends JedisPubSub {
             }
 
             switch (type) {
+
                 case GET_DATA       -> addon.handleGet(source, requestData);
                 case SET_DATA       -> addon.handleSet(source, requestData);
                 case REMOVE_DATA    -> addon.handleRemove(source, requestData);
                 case INCREMENT_DATA -> addon.handleIncrementData(source, requestData);
+                case RANKING ->  addon.handleRankingData(source, requestData);
+                case RANK_FINDER -> addon.handleRankFinderData(source, requestData);
+
                 default             -> LOGGER.warning("Unhandled RequestType: " + type);
             }
 

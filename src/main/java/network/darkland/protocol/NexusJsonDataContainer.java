@@ -32,6 +32,11 @@ public class NexusJsonDataContainer {
         dataMap.put(key, value);
     }
 
+    public NexusJsonDataContainer remove(String key) {
+        dataMap.remove(key);
+        return this;
+    }
+
     public String toFullJson() {
         try {
             return mapper.writeValueAsString(dataMap);
