@@ -1,23 +1,57 @@
 package network.darkland.mongo;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoClientSettings;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.ReplaceOptions;
 import com.mongodb.client.model.Sorts;
 import network.darkland.protocol.DataAddon;
-import network.darkland.protocol.NexusJsonDataContainer;
 import org.bson.Document;
 
+
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
 
 public class MongoManager {
 
     private final MongoClient client;
 
     public MongoManager(String uri) {
-        this.client = MongoClients.create(uri);
+        ConnectionString connectionString =
+                new ConnectionString(uri);
+
+        MongoClientSettings settings = MongoClientSettings.builder()
+                .applyConnectionString(connectionString)
+
+                .applyToClusterSettings(builder ->
+                        builder.serverSelectionTimeout(2, TimeUnit.SECONDS)
+                )
+
+                .applyToSocketSettings(builder ->
+                        builder.connectTimeout(2, TimeUnit.SECONDS)
+                                .readTimeout(2, TimeUnit.SECONDS)
+                )
+
+                .build();
+
+        client = MongoClients.create(settings);
+    }
+
+
+    public boolean verifyConnection() {
+        try {
+            client.getDatabase("admin")
+                    .runCommand(new Document("ping", 1));
+
+            System.out.println("[MongoDB] Connection has been checked");
+            return true;
+
+        } catch (Exception e) {
+            System.err.println("[MongoDB] Connection failed: " + e.getMessage());
+            return false;
+        }
     }
 
 

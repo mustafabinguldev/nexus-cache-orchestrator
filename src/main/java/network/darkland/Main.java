@@ -158,12 +158,13 @@ public class Main {
         new Thread(() -> {
             try {
                 redirectOut();
-                new NexusApplication(fRedis, fMongo, fMetrics, fUrl, fToken, fOrg, fBucket);
+                NexusApplication application = new NexusApplication(fRedis, fMongo, fMetrics, fUrl, fToken, fOrg, fBucket);
                 SwingUtilities.invokeLater(() -> {
                     cardLayout.show(mainPanel, "DASH");
                     startTimers();
                     goOnline();
                 });
+
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> {
                     cardLayout.show(mainPanel, "LOGIN");

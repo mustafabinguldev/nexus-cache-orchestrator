@@ -7,12 +7,14 @@ import network.darkland.protocol.ProtocolHandler;
 import network.darkland.redis.RedisDataContainer;
 import network.darkland.redis.RedisManager;
 
+import javax.swing.*;
 import java.io.File;
 import java.net.URI;
 import java.net.URL;
 import java.net.URLClassLoader;
 import java.util.Enumeration;
 import java.util.List;
+import java.util.concurrent.TimeUnit;
 import java.util.jar.JarEntry;
 import java.util.jar.JarFile;
 
@@ -40,6 +42,38 @@ public class NexusApplication {
         this.mongoManager = new MongoManager(mongoUri);
 
 
+        this.redisManager.processTask(() -> {
+
+            if (!mongoManager.verifyConnection()) {
+                JOptionPane.showMessageDialog(
+                        null,
+                        "MongoDB connection failed!",
+                        "Error",
+                        JOptionPane.ERROR_MESSAGE
+                );
+
+                System.exit(1);
+            }
+
+        });
+
+        redisManager.scheduleTask(() -> {
+
+            if (!mongoManager.verifyConnection()) {
+
+                SwingUtilities.invokeLater(() -> {
+                    JOptionPane.showMessageDialog(
+                            null,
+                            "MongoDB connection lost!",
+                            "Critical Error",
+                            JOptionPane.ERROR_MESSAGE
+                    );
+                });
+
+                System.exit(1);
+            }
+
+        }, 0, 10, TimeUnit.SECONDS);
         loadAddons();
 
         List<String> names = protocolHandler.getAddondsNames();
@@ -56,6 +90,7 @@ public class NexusApplication {
                     influxToken.toCharArray(),
                     influxOrg, influxBucket);
         }
+
 
     }
 

@@ -26,6 +26,8 @@ public class ProtocolHandler {
             return;
         }
 
+        System.out.println(addon.getClass().getName()+" Protocol Id: "+addon.addonId());
+
         addons.put(addon.addonId(), addon);
     }
 
