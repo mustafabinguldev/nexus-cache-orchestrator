@@ -5,14 +5,22 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>network.darkland</groupId>
-    <artifactId>DarklandNexusCore</artifactId>
-    <version>1.0-SNAPSHOT</version>
+    <artifactId>nexus-cache-orchestrato</artifactId>
+    <version>1.4.1</version>
 
     <properties>
         <maven.compiler.source>21</maven.compiler.source>
         <maven.compiler.target>21</maven.compiler.target>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     </properties>
+
+
+    <distributionManagement>
+        <repository>
+            <id>github-nexus-core</id>
+            <url>https://maven.pkg.github.com/mustafabinguldev/nexus-cache-orchestrator</url>
+        </repository>
+    </distributionManagement>
 
     <build>
         <plugins>
