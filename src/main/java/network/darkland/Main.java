@@ -1,6 +1,7 @@
 package network.darkland;
 
 import com.influxdb.client.domain.WritePrecision;
+import network.darkland.Influxdb.InfluxDBManager;
 import org.json.JSONObject;
 
 import javax.swing.*;
@@ -494,7 +495,10 @@ public class Main {
                 point.time(Instant.now(), WritePrecision.NS);
 
                 CompletableFuture.runAsync(() -> {
-                    NexusApplication.getApplication().getInfluxDBManager().write(point);
+                    Optional<InfluxDBManager> influxDBManagerOptional = NexusApplication.getApplication().getInfluxDBManager();
+                    if (influxDBManagerOptional.isEmpty())  {
+                        influxDBManagerOptional.get().write(point);
+                    }
                 });
 
                 SwingUtilities.invokeLater(() -> {

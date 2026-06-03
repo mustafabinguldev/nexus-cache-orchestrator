@@ -7,6 +7,7 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
+import network.darkland.Influxdb.InfluxDBManager;
 import network.darkland.Influxdb.annotations.NexusMetric;
 import network.darkland.Influxdb.annotations.NexusMetricConfig;
 import network.darkland.NexusApplication;
@@ -19,6 +20,7 @@ import network.darkland.util.NexusJsonBuilder;
 
 import java.lang.reflect.Field;
 import java.time.Instant;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Optional;
 import java.util.UUID;
@@ -34,168 +36,159 @@ public abstract class DataAddon {
 
     private static final Logger LOGGER = Logger.getLogger(DataAddon.class.getName());
 
-    private volatile String cachedIdFieldName = null;
-    private volatile Class<?> cachedIdClass = null;
+    // ── ID field cache ──────────────────────────────────────────────────────
+    private volatile String  cachedIdFieldName = null;
+    private volatile Class<?> cachedIdClass    = null;
     private final Object idCacheLock = new Object();
 
-
+    // ── Annotated-fields cache ──────────────────────────────────────────────
     private volatile Field[] cachedAnnotatedFields = null;
     private final Object fieldCacheLock = new Object();
 
+    // ── Per-key mutex map ───────────────────────────────────────────────────
     private final ConcurrentHashMap<String, Object> keyLocks = new ConcurrentHashMap<>();
 
+    // ── Abstract API ────────────────────────────────────────────────────────
     public abstract boolean handleRequest(String source, RequestType type, NexusJsonDataContainer json);
+    public abstract int     addonId();
+    public abstract String  addonName();
+    public abstract String  cacheKeyHeaderTag();
+    public abstract String  getDatabase();
+    public abstract String  getCollection();
+    public abstract int     getCacheTTL();
 
-    public abstract int addonId();
-
-    public abstract String addonName();
-
-    public abstract String cacheKeyHeaderTag();
-
-    public abstract String getDatabase();
-
-    public abstract String getCollection();
-
-    public abstract int getCacheTTL();
-
+    // ────────────────────────────────────────────────────────────────────────
+    // pushMetrics
+    // ────────────────────────────────────────────────────────────────────────
     public void pushMetrics(NexusJsonDataContainer currentData) {
-
-        if (!getClass().isAnnotationPresent(NexusMetricConfig.class)) {
-            return;
-        }
-
         NexusMetricConfig metricConfig = getClass().getAnnotation(NexusMetricConfig.class);
-        String measurement;
-        if (!metricConfig.enabled()) {
-            return;
-        }
-        if (metricConfig.customMeasurement().equals("")) {
-            measurement = getClass().getName();
-        }else {
-            measurement = metricConfig.customMeasurement();
-        }
-        Point point = Point.measurement(measurement).addTag(getIdFieldName(),
-                getSpecificDbKeyFromJsonKeyToValue(currentData));
-        point.time(Instant.now(), WritePrecision.NS);
+        // Annotation yoksa veya devre dışıysa erken çık
+        if (metricConfig == null || !metricConfig.enabled()) return;
+
+        String measurement = metricConfig.customMeasurement().isEmpty()
+                ? getClass().getName()
+                : metricConfig.customMeasurement();
+
+        Point point = Point
+                .measurement(measurement)
+                .addTag(getIdFieldName(), getSpecificDbKeyFromJsonKeyToValue(currentData))
+                .time(Instant.now(), WritePrecision.NS);
 
         HashMap<String, Object> fields = new HashMap<>();
+        String idFieldName = getIdFieldName();
 
         for (Field field : getClass().getDeclaredFields()) {
-
-            if (field.getName().equals(getIdFieldName())) {
-                continue;
-            }
-
-            if (!field.isAnnotationPresent(NexusMetric.class)) {
-                continue;
-            }
+            if (field.getName().equals(idFieldName)) continue;
+            if (!field.isAnnotationPresent(NexusMetric.class)) continue;
 
             String fieldName = field.getName();
             if (!currentData.containsKey(fieldName)) continue;
-            Object object = currentData.get(fieldName, Object.class);
+
+            Object value      = currentData.get(fieldName, Object.class);
             NexusMetric metric = field.getAnnotation(NexusMetric.class);
+            String dataKey    = metric.value().isEmpty() ? fieldName : metric.value();
 
-            String dataKey;
-            if (metric.value().equals("")) {
-                dataKey = fieldName;
-            }else{
-                dataKey = metric.value();
-            }
-
-            if (metric.isTag()) {
-                point.addTag(dataKey, object.toString());
-            }
-
-            fields.put(dataKey, object);
+            if (metric.isTag()) point.addTag(dataKey, value.toString());
+            fields.put(dataKey, value);
         }
 
         point.addFields(fields);
-        CompletableFuture.runAsync(() -> {
-            NexusApplication.getApplication().getInfluxDBManager().write(point);
-        });
+
+        // Metrics yazımı async — uygulama referansı lambda'ya capture edildi
+        NexusApplication app = NexusApplication.getApplication();
+        CompletableFuture.runAsync(() ->
+                app.getInfluxDBManager().ifPresent(db -> db.write(point))
+        );
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // loadIntoCache
+    // ────────────────────────────────────────────────────────────────────────
     public void loadIntoCache(Object key) {
         Class<?> expectedType = getIdClassName();
         if (expectedType == null || !expectedType.isInstance(key)) return;
 
-        String keyTag = cacheKeyHeaderTag() + "_" + key;
+        String keyTag        = cacheKeyHeaderTag() + "_" + key;
         NexusApplication app = NexusApplication.getApplication();
 
         if (app.getDataContainer().getDataModelFromKey(keyTag).isPresent()) return;
 
-        NexusJsonDataContainer triggerContainer = new NexusJsonDataContainer();
-        triggerContainer.set(getIdFieldName(), key);
-        getData(triggerContainer);
-
+        NexusJsonDataContainer trigger = new NexusJsonDataContainer();
+        trigger.set(getIdFieldName(), key);
+        getData(trigger);
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // handleRankFinderData
+    // ────────────────────────────────────────────────────────────────────────
     public void handleRankFinderData(String source, NexusJsonDataContainer json) {
+        if (!json.containsKey("field") || !json.containsKey("key") || !json.containsKey("order")) return;
 
-        NexusApplication.getApplication().getRedisManager().processTask(() -> {
+        String field = json.get("field", String.class);
+        String key   = json.get("key",   String.class);
+        String order = json.get("order", String.class);
 
-            if (!json.containsKey("field") || !json.containsKey("key") || !json.containsKey("order")) return;
-
-            String field = json.get("field", String.class);
-            String key = json.get("key", String.class);
-            String order = json.get("order", String.class);
-
-            NexusApplication.getApplication().getMongoManager().getPosition(this, key, field, order)
-                    .thenAccept(position -> {
-                        NexusJsonDataContainer response = new NexusJsonDataContainer();
-                        response.set("protocol", addonId());
-                        response.set("type", "RANK_FINDER_RESPONSE");
-                        response.set("target", source);
-                        response.set("key", key);
-                        response.set("position", position);
-                        String responseJson = response.toFullJson();
-                        NexusApplication.getApplication().getRedisManager().publish(RedisManager.CHANNEL + "_" + source, responseJson);
-                    });
-        });
+        NexusApplication app = NexusApplication.getApplication();
+        app.getRedisManager().processTask(() ->
+                app.getMongoManager().getPosition(this, key, field, order)
+                        .thenAccept(position -> {
+                            NexusJsonDataContainer response = new NexusJsonDataContainer();
+                            response.set("protocol", addonId());
+                            response.set("type",     "RANK_FINDER_RESPONSE");
+                            response.set("target",   source);
+                            response.set("key",      key);
+                            response.set("position", position);
+                            app.getRedisManager().publish(
+                                    RedisManager.CHANNEL + "_" + source,
+                                    response.toFullJson()
+                            );
+                        })
+        );
     }
 
-
+    // ────────────────────────────────────────────────────────────────────────
+    // handleRankingData
+    // ────────────────────────────────────────────────────────────────────────
     public void handleRankingData(String source, NexusJsonDataContainer json) {
-        NexusApplication.getApplication().getRedisManager().processTask(() -> {
-            if (!json.containsKey("field") || !json.containsKey("order") || !json.containsKey("limit")) {
-                return;
-            }
+        if (!json.containsKey("field") || !json.containsKey("order") || !json.containsKey("limit")) return;
 
-            String field = json.get("field", String.class);
-            String order = json.get("order", String.class);
-            int limit = json.get("limit", Integer.class);
+        String field = json.get("field", String.class);
+        String order = json.get("order", String.class);
+        int    limit = json.get("limit", Integer.class);
 
-            NexusApplication.getApplication().getMongoManager().getRanking(this, field, order, limit)
-                    .thenAccept(rankingMap -> {
-
-                        NexusJsonDataContainer response = new NexusJsonDataContainer();
-                        response.set("protocol", addonId());
-                        response.set("type", "RANKING_RESPONSE");
-                        response.set("target", source);
-                        response.set("response", rankingMap);
-
-                        String responseJson = response.toFullJson();
-                        NexusApplication.getApplication().getRedisManager().publish(RedisManager.CHANNEL + "_" + source, responseJson);
-
-                    })
-                    .exceptionally(ex -> {
-                        ex.printStackTrace();
-                        return null;
-                    });
-        });
+        NexusApplication app = NexusApplication.getApplication();
+        app.getRedisManager().processTask(() ->
+                app.getMongoManager().getRanking(this, field, order, limit)
+                        .thenAccept(rankingMap -> {
+                            NexusJsonDataContainer response = new NexusJsonDataContainer();
+                            response.set("protocol", addonId());
+                            response.set("type",     "RANKING_RESPONSE");
+                            response.set("target",   source);
+                            response.set("response", rankingMap);
+                            app.getRedisManager().publish(
+                                    RedisManager.CHANNEL + "_" + source,
+                                    response.toFullJson()
+                            );
+                        })
+                        .exceptionally(ex -> { ex.printStackTrace(); return null; })
+        );
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // handleIncrementData
+    // ────────────────────────────────────────────────────────────────────────
     public void handleIncrementData(String source, NexusJsonDataContainer json) {
-        NexusApplication.getApplication().getRedisManager().processTask(() -> {
+        NexusApplication app = NexusApplication.getApplication();
+        app.getRedisManager().processTask(() -> {
             try {
                 if (!json.containsKey("key") || !json.containsKey("field") || !json.containsKey("amount")) {
                     LOGGER.warning("[DataAddon/" + addonName() + "] INCREMENT_DATA: missing required fields (key/field/amount)");
                     return;
                 }
 
-                String field  = json.get("field", String.class);
-                Number amount = json.get("amount", Number.class);
-                Object keyValue = json.get("key", getIdClassName());
+                String field    = json.get("field",  String.class);
+                Number amount   = json.get("amount", Number.class);
+                Object keyValue = json.get("key",    getIdClassName());
 
                 if (field == null || amount == null || keyValue == null) {
                     LOGGER.warning("[DataAddon/" + addonName() + "] INCREMENT_DATA: null value detected");
@@ -203,6 +196,8 @@ public abstract class DataAddon {
                 }
 
                 json.set(getIdFieldName(), keyValue);
+
+                // Per-key lock — aynı key için paralel increment'i engeller
                 Object lock = keyLocks.computeIfAbsent(keyValue.toString(), k -> new Object());
                 synchronized (lock) {
                     Optional<DataModel> dataModelOpt = getData(json);
@@ -212,7 +207,7 @@ public abstract class DataAddon {
                     }
 
                     DataModel dataModel = dataModelOpt.get();
-                    JsonNode rootNode = MAPPER.readTree(dataModel.getValueJson());
+                    JsonNode  rootNode  = MAPPER.readTree(dataModel.getValueJson());
 
                     if (!rootNode.has(field) || !rootNode.get(field).isNumber()) {
                         LOGGER.warning("[DataAddon/" + addonName() + "] INCREMENT_DATA: field missing or not a number -> " + field);
@@ -220,7 +215,7 @@ public abstract class DataAddon {
                     }
 
                     ObjectNode updatedNode = (ObjectNode) rootNode;
-                    JsonNode targetNode = rootNode.get(field);
+                    JsonNode   targetNode  = rootNode.get(field);
 
                     if (targetNode.isIntegralNumber()) {
                         updatedNode.put(field, targetNode.asLong() + amount.longValue());
@@ -230,13 +225,12 @@ public abstract class DataAddon {
 
                     String updatedJson = MAPPER.writeValueAsString(updatedNode);
                     dataModel.setValueJson(updatedJson);
-                    NexusApplication.getApplication().getRedisManager().setData(dataModel.getKey(), updatedJson, dataModel.getAddon());
-                    NexusApplication.getApplication().getRedisManager().renewTTL(dataModel.getKey(), getCacheTTL());
 
-                    pushMetrics(new NexusJsonDataContainer(dataModel.getValueJson()));
+                    RedisManager redis = app.getRedisManager();
+                    redis.setData(dataModel.getKey(), updatedJson, dataModel.getAddon());
+                    redis.renewTTL(dataModel.getKey(), getCacheTTL());
 
-
-
+                    pushMetrics(new NexusJsonDataContainer(updatedJson));
                 }
 
             } catch (Exception e) {
@@ -245,38 +239,44 @@ public abstract class DataAddon {
         });
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // handleRemove
+    // ────────────────────────────────────────────────────────────────────────
     public void handleRemove(String source, NexusJsonDataContainer json) {
-        NexusApplication.getApplication().getRedisManager().processTask(() -> {
+        NexusApplication app = NexusApplication.getApplication();
+        app.getRedisManager().processTask(() -> {
             try {
                 String idFieldName = getIdFieldName();
                 if (idFieldName.isEmpty() || !json.containsKey(idFieldName)) return;
                 if (!json.containsKey("all")) return;
 
-                String specificId = json.get(idFieldName, getIdClassName()).toString();
-                boolean allRemove = Boolean.TRUE.equals(json.get("all", Boolean.class));
+                String  specificId = json.get(idFieldName, getIdClassName()).toString();
+                boolean allRemove  = Boolean.TRUE.equals(json.get("all", Boolean.class));
 
-                RedisDataContainer dataContainer = NexusApplication.getApplication().getDataContainer();
-                Optional<DataModel> dataModel = getData(json);
-
-                if (dataModel.isPresent()) {
-                    dataContainer.removeModel(dataModel.get().getKey());
+                getData(json).ifPresent(dataModel -> {
+                    app.getDataContainer().removeModel(dataModel.getKey());
                     if (allRemove) {
-                        NexusApplication.getApplication().getMongoManager().removeValue(this, specificId);
+                        app.getMongoManager().removeValue(this, specificId);
                     }
-                }
+                });
+
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handleRemove error", e);
             }
         });
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // handleGet
+    // ────────────────────────────────────────────────────────────────────────
     public void handleGet(String source, NexusJsonDataContainer json) {
-        NexusApplication.getApplication().getRedisManager().processTask(() -> {
+        NexusApplication app = NexusApplication.getApplication();
+        app.getRedisManager().processTask(() -> {
             try {
-                Optional<DataModel> dataModel = getData(json);
+                Optional<DataModel> dataModelOpt = getData(json);
                 DataModel targetModel;
 
-                if (dataModel.isEmpty()) {
+                if (dataModelOpt.isEmpty()) {
                     String idFieldName = getIdFieldName();
                     if (idFieldName.isEmpty()) return;
 
@@ -288,22 +288,23 @@ public abstract class DataAddon {
                     if (idValue == null) return;
 
                     targetModel = createModel(generateRawJson(idValue.toString()));
-                    NexusApplication app = NexusApplication.getApplication();
                     app.getDataContainer().addModelDirect(targetModel.getKey(), targetModel);
                     app.getRedisManager().setData(targetModel.getKey(), targetModel.getValueJson(), targetModel.getAddon());
                 } else {
-                    targetModel = dataModel.get();
+                    targetModel = dataModelOpt.get();
                 }
 
                 ObjectNode rootNode = JsonUtils.getMapper().createObjectNode();
                 rootNode.put("protocol", addonId());
-                rootNode.put("source", "nexus");
-                rootNode.put("type", "BROADCAST");
-                rootNode.put("target", source);
-                rootNode.set("data", MAPPER.readTree(targetModel.getValueJson()));
+                rootNode.put("source",   "nexus");
+                rootNode.put("type",     "BROADCAST");
+                rootNode.put("target",   source);
+                rootNode.set("data",     MAPPER.readTree(targetModel.getValueJson()));
 
-                NexusApplication.getApplication().getRedisManager()
-                        .publish(RedisManager.CHANNEL + "_" + source, MAPPER.writeValueAsString(rootNode));
+                app.getRedisManager().publish(
+                        RedisManager.CHANNEL + "_" + source,
+                        MAPPER.writeValueAsString(rootNode)
+                );
 
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handleGet error", e);
@@ -311,56 +312,64 @@ public abstract class DataAddon {
         });
     }
 
-
+    // ────────────────────────────────────────────────────────────────────────
+    // handleSet
+    // ────────────────────────────────────────────────────────────────────────
     public void handleSet(String source, NexusJsonDataContainer json) {
-        NexusApplication.getApplication().getRedisManager().processTask(() -> {
+        NexusApplication app = NexusApplication.getApplication();
+        app.getRedisManager().processTask(() -> {
             try {
                 String rawInput = json.containsKey("data")
                         ? JsonUtils.toJson(json.get("data", Object.class))
                         : json.toFullJson();
 
                 if (rawInput == null || !rawInput.trim().startsWith("{")) {
-                    LOGGER.warning("[DataAddon/" + addonName() + "] source=" + source);
+                    LOGGER.warning("[DataAddon/" + addonName() + "] handleSet: geçersiz JSON, source=" + source);
                     return;
                 }
 
-                Optional<DataModel> dataModel = getData(json);
+                Optional<DataModel> dataModelOpt = getData(json);
 
-                if (dataModel.isEmpty()) {
+                if (dataModelOpt.isEmpty()) {
                     DataModel newModel = createModel(modelInit(rawInput));
-                    NexusApplication app = NexusApplication.getApplication();
                     app.getDataContainer().addModelDirect(newModel.getKey(), newModel);
                     app.getRedisManager().setData(newModel.getKey(), newModel.getValueJson(), newModel.getAddon());
                     pushMetrics(new NexusJsonDataContainer(newModel.getValueJson()));
                 } else {
-                    DataModel existing = dataModel.get();
-                    String updated = modelInitComp(rawInput);
+                    DataModel existing = dataModelOpt.get();
+                    String    updated  = modelInitComp(rawInput);
                     existing.setValueJson(updated);
-                    NexusApplication.getApplication().getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
-                    NexusApplication.getApplication().getRedisManager().renewTTL(existing.getKey(), getCacheTTL());
-                    pushMetrics(new NexusJsonDataContainer(existing.getValueJson()));
+
+                    RedisManager redis = app.getRedisManager();
+                    redis.setData(existing.getKey(), updated, existing.getAddon());
+                    redis.renewTTL(existing.getKey(), getCacheTTL());
+                    pushMetrics(new NexusJsonDataContainer(updated));
                 }
+
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handleSet error", e);
             }
         });
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // modelInit / modelInitComp
+    // ────────────────────────────────────────────────────────────────────────
     public String modelInit(String json) {
         ObjectNode outputNode = MAPPER.createObjectNode();
         try {
             JsonNode inputNode = MAPPER.readTree(json);
             for (Field field : getAnnotatedFields()) {
-                String fieldName = field.getName();
-                DbDataModels anno = field.getAnnotation(DbDataModels.class);
-
-                Object targetValue = convertToType(anno.defaultValue(), field.getType());
+                String       fieldName   = field.getName();
+                DbDataModels anno        = field.getAnnotation(DbDataModels.class);
+                Object       targetValue = convertToType(anno.defaultValue(), field.getType());
 
                 if (inputNode.has(fieldName) && !inputNode.get(fieldName).isNull()) {
                     targetValue = MAPPER.readerForUpdating(targetValue).readValue(inputNode.get(fieldName));
                 }
 
-                outputNode.set(fieldName, targetValue != null ? MAPPER.valueToTree(targetValue) : MAPPER.createObjectNode());
+                outputNode.set(fieldName,
+                        targetValue != null ? MAPPER.valueToTree(targetValue) : MAPPER.createObjectNode());
             }
             return MAPPER.writeValueAsString(outputNode);
         } catch (Exception e) {
@@ -371,13 +380,13 @@ public abstract class DataAddon {
 
     public String modelInitComp(String json) {
         try {
-            JsonNode rootNode = MAPPER.readTree(json);
+            JsonNode   rootNode    = MAPPER.readTree(json);
             ObjectNode updatedNode = MAPPER.createObjectNode();
 
             for (Field field : getAnnotatedFields()) {
-                String fieldName = field.getName();
-                DbDataModels anno = field.getAnnotation(DbDataModels.class);
-                Object baseObj = convertToType(anno.defaultValue(), field.getType());
+                String       fieldName = field.getName();
+                DbDataModels anno      = field.getAnnotation(DbDataModels.class);
+                Object       baseObj   = convertToType(anno.defaultValue(), field.getType());
 
                 if (rootNode.has(fieldName) && !rootNode.get(fieldName).isNull()) {
                     baseObj = MAPPER.readerForUpdating(baseObj).readValue(rootNode.get(fieldName));
@@ -391,11 +400,14 @@ public abstract class DataAddon {
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // getAnnotatedFields  (double-checked locking)
+    // ────────────────────────────────────────────────────────────────────────
     private Field[] getAnnotatedFields() {
         if (cachedAnnotatedFields != null) return cachedAnnotatedFields;
         synchronized (fieldCacheLock) {
             if (cachedAnnotatedFields != null) return cachedAnnotatedFields;
-            cachedAnnotatedFields = java.util.Arrays.stream(getClass().getDeclaredFields())
+            cachedAnnotatedFields = Arrays.stream(getClass().getDeclaredFields())
                     .filter(f -> f.isAnnotationPresent(DbDataModels.class))
                     .peek(f -> f.setAccessible(true))
                     .toArray(Field[]::new);
@@ -403,39 +415,47 @@ public abstract class DataAddon {
         return cachedAnnotatedFields;
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // convertToType
+    // ────────────────────────────────────────────────────────────────────────
     private Object convertToType(String value, Class<?> type) {
         boolean blank = value == null || value.isEmpty() || value.equals("{}");
 
         if (blank) {
-            if (type == String.class)                           return "";
-            if (type == int.class || type == Integer.class)     return 0;
-            if (type == long.class || type == Long.class)       return 0L;
-            if (type == double.class || type == Double.class)   return 0.0;
-            if (type == boolean.class || type == Boolean.class) return false;
+            if (type == String.class)                            return "";
+            if (type == int.class     || type == Integer.class)  return 0;
+            if (type == long.class    || type == Long.class)     return 0L;
+            if (type == double.class  || type == Double.class)   return 0.0;
+            if (type == boolean.class || type == Boolean.class)  return false;
             try {
                 return type.getDeclaredConstructor().newInstance();
             } catch (Exception e) {
-                try { return MAPPER.readValue("{}", type); } catch (Exception ex) {
-                    LOGGER.warning("[DataAddon/" + addonName() + "] convertToType: could not produce default for " + type.getSimpleName());
+                try   { return MAPPER.readValue("{}", type); }
+                catch (Exception ex) {
+                    LOGGER.warning("[DataAddon/" + addonName() + "] convertToType: default üretilemedi -> " + type.getSimpleName());
                     return null;
                 }
             }
         }
 
-        if (type == String.class)                           return value;
-        if (type == int.class || type == Integer.class)     return Integer.parseInt(value);
-        if (type == long.class || type == Long.class)       return Long.parseLong(value);
-        if (type == double.class || type == Double.class)   return Double.parseDouble(value);
-        if (type == boolean.class || type == Boolean.class) return Boolean.parseBoolean(value);
+        if (type == String.class)                            return value;
+        if (type == int.class     || type == Integer.class)  return Integer.parseInt(value);
+        if (type == long.class    || type == Long.class)     return Long.parseLong(value);
+        if (type == double.class  || type == Double.class)   return Double.parseDouble(value);
+        if (type == boolean.class || type == Boolean.class)  return Boolean.parseBoolean(value);
 
         try {
             return MAPPER.readValue(value, type);
         } catch (Exception e) {
-            LOGGER.warning("[DataAddon/" + addonName() + "] convertToType parse error: " + type.getSimpleName() + " value=" + value);
+            LOGGER.warning("[DataAddon/" + addonName() + "] convertToType parse error: "
+                    + type.getSimpleName() + " value=" + value);
             return null;
         }
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // getIdFieldName / getIdClassName  (double-checked locking)
+    // ────────────────────────────────────────────────────────────────────────
     public String getIdFieldName() {
         if (cachedIdFieldName != null) return cachedIdFieldName;
         synchronized (idCacheLock) {
@@ -443,7 +463,7 @@ public abstract class DataAddon {
             for (Field f : getClass().getDeclaredFields()) {
                 if (f.isAnnotationPresent(DbDataModels.class) && f.getAnnotation(DbDataModels.class).isId()) {
                     cachedIdFieldName = f.getName();
-                    cachedIdClass = f.getType();
+                    cachedIdClass     = f.getType();
                     return cachedIdFieldName;
                 }
             }
@@ -458,6 +478,9 @@ public abstract class DataAddon {
         return cachedIdClass;
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // getData
+    // ────────────────────────────────────────────────────────────────────────
     public Optional<DataModel> getData(NexusJsonDataContainer dataContainer) {
         try {
             NexusJsonDataContainer work = dataContainer.containsKey("data")
@@ -467,31 +490,35 @@ public abstract class DataAddon {
             String specificValue = getSpecificDbKeyFromJsonKeyToValue(work);
             if (specificValue.isEmpty() || "null".equals(specificValue)) return Optional.empty();
 
-            String keyTag = cacheKeyHeaderTag() + "_" + specificValue;
-            NexusApplication app = NexusApplication.getApplication();
+            String           keyTag = cacheKeyHeaderTag() + "_" + specificValue;
+            NexusApplication app    = NexusApplication.getApplication();
+            RedisManager     redis  = app.getRedisManager();
 
+            // L1 — in-process cache
             Optional<DataModel> l1 = app.getDataContainer().getDataModelFromKey(keyTag);
             if (l1.isPresent()) {
                 pushMetrics(new NexusJsonDataContainer(l1.get().getValueJson()));
                 return l1;
             }
 
-            if (app.getRedisManager().exists(keyTag)) {
-                String redisJson = app.getRedisManager().getData(keyTag).get();
+            // L2 — Redis cache
+            if (redis.exists(keyTag)) {
+                String redisJson = redis.getData(keyTag).get();
 
                 if (redisJson == null || !redisJson.trim().startsWith("{")) {
-                    LOGGER.warning("[DataAddon/" + addonName() + "] Redis'te bozuk/binary veri tespit edildi, siliniyor. key=" + keyTag);
-                    app.getRedisManager().deleteData(keyTag);
+                    LOGGER.warning("[DataAddon/" + addonName() + "] Redis'te bozuk veri tespit edildi, siliniyor. key=" + keyTag);
+                    redis.deleteData(keyTag);
                 } else {
                     DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
                             modelInitComp(redisJson), this, specificValue);
                     app.getDataContainer().addModelFix(keyTag, m);
-                    app.getRedisManager().renewTTL(keyTag, getCacheTTL());
+                    redis.renewTTL(keyTag, getCacheTTL());
                     pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
                     return Optional.of(m);
                 }
             }
 
+            // L3 — MongoDB
             String dbJson = app.getMongoManager().getValue(this, specificValue).join();
             if (dbJson != null) {
                 DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
@@ -507,6 +534,9 @@ public abstract class DataAddon {
         return Optional.empty();
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Yardımcı metodlar
+    // ────────────────────────────────────────────────────────────────────────
     public String getSpecificDbKeyFromJsonKeyToValue(NexusJsonDataContainer dataContainer) {
         String idName = getIdFieldName();
         if (idName.isEmpty()) return "";
@@ -522,11 +552,16 @@ public abstract class DataAddon {
     public DataModel createModel(String json) throws JsonProcessingException {
         NexusJsonDataContainer container = new NexusJsonDataContainer(json);
         String specificKey = getSpecificDbKeyFromJsonKeyToValue(container);
-        String keyTag = cacheKeyHeaderTag() + "_" + specificKey;
+        String keyTag      = cacheKeyHeaderTag() + "_" + specificKey;
         return new DataModel(keyTag, UUID.randomUUID().toString(), json, this, specificKey);
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // RequestType enum
+    // ────────────────────────────────────────────────────────────────────────
     public enum RequestType {
-        SET_DATA, GET_DATA, UPDATE_DATA, REMOVE_DATA, BROADCAST, LOAD_CACHE, INCREMENT_DATA, LIVE, RANKING, RANK_FINDER
+        SET_DATA, GET_DATA, UPDATE_DATA, REMOVE_DATA,
+        BROADCAST, LOAD_CACHE, INCREMENT_DATA, LIVE,
+        RANKING, RANK_FINDER
     }
 }
