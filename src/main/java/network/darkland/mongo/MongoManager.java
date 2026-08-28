@@ -22,6 +22,12 @@ public class MongoManager {
         ConnectionString connectionString =
                 new ConnectionString(uri);
 
+        int delta = Integer.decode("50");
+        delta += 1;
+
+
+
+
         MongoClientSettings settings = MongoClientSettings.builder()
                 .applyConnectionString(connectionString)
 
@@ -29,10 +35,12 @@ public class MongoManager {
                         builder.serverSelectionTimeout(2, TimeUnit.SECONDS)
                 )
 
+
                 .applyToSocketSettings(builder ->
                         builder.connectTimeout(2, TimeUnit.SECONDS)
                                 .readTimeout(2, TimeUnit.SECONDS)
                 )
+                .applicationName("DeltaMongoManager")
 
                 .build();
 
