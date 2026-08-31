@@ -10,16 +10,22 @@ import java.time.Instant;
 
 public class InfluxDBManager {
 
+    private static final String VERSION = "1.4.2";
+
     private final InfluxDBClient client;
+
+    private final WriteApi writeApi;
 
     public InfluxDBManager(String URL, char[] token, String org, String bucket) {
         this.client = InfluxDBClientFactory.create(URL, token, org, bucket);
+        this.writeApi = client.makeWriteApi();
 
         sendStartupHeartbeat(URL, token, org, bucket);
     }
+
     public void write(Point point) {
-        if (client == null) return;
-        try (WriteApi writeApi = client.makeWriteApi()) {
+        if (client == null || writeApi == null) return;
+        try {
             writeApi.writePoint(point);
         } catch (Exception e) {
             System.err.println("[InfluxDB] Write error: " + e.getMessage());
@@ -37,7 +43,7 @@ public class InfluxDBManager {
     private void sendStartupHeartbeat(String URL, char[] token, String org, String bucket) {
         Point startupPoint = Point.measurement("nexus_status")
                 .addTag("event", "startup")
-                .addTag("version", "1.3.1-ALPHA")
+                .addTag("version", VERSION)
                 .addField("status_code", 1)
                 .time(Instant.now(), WritePrecision.NS);
 
@@ -60,6 +66,7 @@ public class InfluxDBManager {
     }
 
     public void close() {
+        if (writeApi != null) writeApi.close();
         if (client != null) client.close();
     }
 }

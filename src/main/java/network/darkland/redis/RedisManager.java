@@ -1,7 +1,6 @@
 package network.darkland.redis;
 
 import network.darkland.NexusApplication;
-import network.darkland.model.DataModel;
 import network.darkland.protocol.DataAddon;
 import redis.clients.jedis.Jedis;
 import redis.clients.jedis.JedisPool;
@@ -21,14 +20,34 @@ public class RedisManager {
 
     private final BlockingQueue<Runnable> internalTaskQueue = new LinkedBlockingQueue<>(50000);
 
+    private final ExecutorService mongoExecutor =
+            Executors.newFixedThreadPool(8, r -> {
+                Thread t = new Thread(r, "Nexus-Mongo-Worker");
+                t.setDaemon(true);
+                return t;
+            });
+
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(
             Runtime.getRuntime().availableProcessors() * 2
     );
-    private String redisHost;
 
-    public RedisManager(NexusApplication application, String redisHost) {
+    private final String redisHost;
+    private final int redisPort;
+    private final String redisUser;
+    private final String redisPass;
+
+    /**
+     * @param redisUser boş string veya null olabilir (ACL kullanılmıyorsa)
+     * @param redisPass boş string veya null olabilir; boşsa parolasız bağlanır (uyarı loglanır)
+     */
+    public RedisManager(NexusApplication application, String redisHost, int redisPort,
+                        String redisUser, String redisPass) {
         this.application = application;
         this.redisHost = redisHost;
+        this.redisPort = redisPort;
+        this.redisUser = redisUser;
+        this.redisPass = redisPass;
+
         this.connect();
 
         this.startInboundWorkers();
@@ -36,6 +55,11 @@ public class RedisManager {
 
         this.startListening();
         System.out.println("Nexus: System initialized with high-performance dual-queue logic.");
+    }
+
+    /** Geriye dönük uyumluluk için: varsayılan port 6379, auth yok. */
+    public RedisManager(NexusApplication application, String redisHost) {
+        this(application, redisHost, 6379, null, null);
     }
 
     private void startInboundWorkers() {
@@ -85,21 +109,43 @@ public class RedisManager {
         }
     }
 
+    public void processMongoTask(Runnable task) {
+        mongoExecutor.execute(task);
+    }
+
     public void connect() {
         JedisPoolConfig poolConfig = new JedisPoolConfig();
         poolConfig.setMaxTotal(128);
         poolConfig.setMaxIdle(64);
         poolConfig.setMinIdle(16);
-        this.pool = new JedisPool(poolConfig, this.redisHost, 6379);
-        System.out.println("Nexus: Connection pool created for host: " + this.redisHost);
 
-        //Config
+        boolean hasAuth = redisPass != null && !redisPass.isBlank();
+        boolean hasUser = redisUser != null && !redisUser.isBlank();
+
+        if (hasAuth) {
+            this.pool = new JedisPool(
+                    poolConfig,
+                    this.redisHost,
+                    this.redisPort,
+                    2000,                 // connection timeout (ms)
+                    hasUser ? redisUser : null,
+                    redisPass
+            );
+            System.out.println("Nexus: Connection pool created for host: " + this.redisHost
+                    + ":" + this.redisPort + " (auth ENABLED)");
+        } else {
+            this.pool = new JedisPool(poolConfig, this.redisHost, this.redisPort);
+            System.err.println("Nexus: UYARI — Redis parolasız bağlanıyor! "
+                    + "Üretim ortamında 'redisPass' ayarını mutlaka yapılandırın.");
+        }
+
         enableKeyspaceNotifications();
-
     }
 
     public void enableKeyspaceNotifications() {
         try (Jedis jedis = pool.getResource()) {
+            // "Ex" sadece TTL expire olaylarını yakalar. maxmemory-policy ile eviction
+            // da izlemek istiyorsan "Egx" kullanmayı değerlendir.
             jedis.configSet("notify-keyspace-events", "Ex");
             System.out.println("Nexus: Keyspace Notifications (Expired) enabled via Jedis.");
         } catch (Exception e) {
@@ -188,6 +234,7 @@ public class RedisManager {
 
     public void shutdown() {
         scheduler.shutdown();
+        mongoExecutor.shutdown();
         pool.close();
     }
 

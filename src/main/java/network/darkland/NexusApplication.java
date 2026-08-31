@@ -32,8 +32,16 @@ public class NexusApplication {
     private final MongoManager mongoManager;
     private final InfluxDBManager influxDBManager;
 
+    /**
+     * @param redisUser boş/null olabilir (Redis ACL kullanılmıyorsa)
+     * @param redisPass boş/null olabilir — ama üretimde MUTLAKA ayarlanmalı.
+     *                   Boş bırakılırsa RedisManager parolasız bağlanır ve uyarı loglar.
+     */
     public NexusApplication(
             String redisHost,
+            int redisPort,
+            String redisUser,
+            String redisPass,
             String mongoUri,
             boolean isMetricsEnabled,
             String influxUrl,
@@ -43,7 +51,7 @@ public class NexusApplication {
     ) {
         application = this;
 
-        this.redisManager    = new RedisManager(this, redisHost);
+        this.redisManager    = new RedisManager(this, redisHost, redisPort, redisUser, redisPass);
         this.protocolHandler = new ProtocolHandler();
         this.dataContainer   = new RedisDataContainer();
         this.mongoManager    = new MongoManager(mongoUri);
@@ -86,6 +94,28 @@ public class NexusApplication {
         this.influxDBManager = isMetricsEnabled
                 ? new InfluxDBManager(influxUrl, influxToken.toCharArray(), influxOrg, influxBucket)
                 : null;
+
+        // Uygulama kapanırken InfluxDB buffer'ının düzgün flush edilmesi için.
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            if (this.influxDBManager != null) {
+                this.influxDBManager.close();
+            }
+            this.redisManager.shutdown();
+        }, "Nexus-Shutdown-Hook"));
+    }
+
+    /** Geriye dönük uyumluluk: auth olmadan, varsayılan port 6379 ile bağlanır. */
+    public NexusApplication(
+            String redisHost,
+            String mongoUri,
+            boolean isMetricsEnabled,
+            String influxUrl,
+            String influxToken,
+            String influxOrg,
+            String influxBucket
+    ) {
+        this(redisHost, 6379, null, null, mongoUri, isMetricsEnabled,
+                influxUrl, influxToken, influxOrg, influxBucket);
     }
 
     private void loadAddons() {
@@ -117,7 +147,6 @@ public class NexusApplication {
     }
 
     private void loadJar(File file) {
-        // URLClassLoader try-with-resources ile kapatılıyor — kaynak sızıntısı yok
         try (JarFile jarFile = new JarFile(file);
              URLClassLoader classLoader = new URLClassLoader(
                      new URL[]{ file.toURI().toURL() },
@@ -147,7 +176,6 @@ public class NexusApplication {
                     }
 
                 } catch (Throwable t) {
-                    // Sessizce yutmak yerine debug log — sorun tespiti kolaylaşır
                     LOGGER.fine("Sınıf atlandı: " + className + " — " + t.getMessage());
                 }
             }
@@ -187,10 +215,6 @@ public class NexusApplication {
         return protocolHandler.getAddondsNames().size();
     }
 
-    /**
-     * Metrics devre dışıysa Optional.empty() döner.
-     * Çağıran taraf null kontrolü yapmak zorunda kalmaz.
-     */
     public Optional<InfluxDBManager> getInfluxDBManager() {
         return Optional.ofNullable(influxDBManager);
     }

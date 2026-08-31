@@ -45,7 +45,6 @@ public abstract class DataAddon {
     private volatile Field[] cachedAnnotatedFields = null;
     private final Object fieldCacheLock = new Object();
 
-    // ── Per-key mutex map ───────────────────────────────────────────────────
     private final ConcurrentHashMap<String, Object> keyLocks = new ConcurrentHashMap<>();
 
     // ── Abstract API ────────────────────────────────────────────────────────
@@ -57,12 +56,12 @@ public abstract class DataAddon {
     public abstract String  getCollection();
     public abstract int     getCacheTTL();
 
-    // ────────────────────────────────────────────────────────────────────────
-    // pushMetrics
-    // ────────────────────────────────────────────────────────────────────────
+    private void releaseKeyLock(String keyValue, Object lock) {
+        keyLocks.remove(keyValue, lock);
+    }
+
     public void pushMetrics(NexusJsonDataContainer currentData) {
         NexusMetricConfig metricConfig = getClass().getAnnotation(NexusMetricConfig.class);
-        // Annotation yoksa veya devre dışıysa erken çık
         if (metricConfig == null || !metricConfig.enabled()) return;
 
         String measurement = metricConfig.customMeasurement().isEmpty()
@@ -94,7 +93,6 @@ public abstract class DataAddon {
 
         point.addFields(fields);
 
-        // Metrics yazımı async — uygulama referansı lambda'ya capture edildi
         NexusApplication app = NexusApplication.getApplication();
         CompletableFuture.runAsync(() ->
                 app.getInfluxDBManager().ifPresent(db -> db.write(point))
@@ -180,6 +178,8 @@ public abstract class DataAddon {
     public void handleIncrementData(String source, NexusJsonDataContainer json) {
         NexusApplication app = NexusApplication.getApplication();
         app.getRedisManager().processTask(() -> {
+            String lockKey = null;
+            Object lock = null;
             try {
                 if (!json.containsKey("key") || !json.containsKey("field") || !json.containsKey("amount")) {
                     LOGGER.warning("[DataAddon/" + addonName() + "] INCREMENT_DATA: missing required fields (key/field/amount)");
@@ -197,8 +197,10 @@ public abstract class DataAddon {
 
                 json.set(getIdFieldName(), keyValue);
 
-                // Per-key lock — aynı key için paralel increment'i engeller
-                Object lock = keyLocks.computeIfAbsent(keyValue.toString(), k -> new Object());
+                // Per-key lock — aynı key için paralel increment'i engeller.
+                lockKey = keyValue.toString();
+                lock = keyLocks.computeIfAbsent(lockKey, k -> new Object());
+
                 synchronized (lock) {
                     Optional<DataModel> dataModelOpt = getData(json);
                     if (dataModelOpt.isEmpty()) {
@@ -224,17 +226,20 @@ public abstract class DataAddon {
                     }
 
                     String updatedJson = MAPPER.writeValueAsString(updatedNode);
+
                     dataModel.setValueJson(updatedJson);
 
-                    RedisManager redis = app.getRedisManager();
-                    redis.setData(dataModel.getKey(), updatedJson, dataModel.getAddon());
-                    redis.renewTTL(dataModel.getKey(), getCacheTTL());
+                    app.getRedisManager().setData(dataModel.getKey(), updatedJson, dataModel.getAddon());
 
                     pushMetrics(new NexusJsonDataContainer(updatedJson));
                 }
 
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handleIncrementData error", e);
+            } finally {
+                if (lockKey != null && lock != null) {
+                    releaseKeyLock(lockKey, lock);
+                }
             }
         });
     }
@@ -256,7 +261,11 @@ public abstract class DataAddon {
                 getData(json).ifPresent(dataModel -> {
                     app.getDataContainer().removeModel(dataModel.getKey());
                     if (allRemove) {
-                        app.getMongoManager().removeValue(this, specificId);
+                        // Mongo'dan kalıcı silme — bloklayan bir işlem olduğu için
+                        // ayrı Mongo işçi havuzunda çalıştırılır.
+                        app.getRedisManager().processMongoTask(() ->
+                                app.getMongoManager().removeValue(this, specificId).join()
+                        );
                     }
                 });
 
@@ -289,7 +298,6 @@ public abstract class DataAddon {
 
                     targetModel = createModel(generateRawJson(idValue.toString()));
                     app.getDataContainer().addModelDirect(targetModel.getKey(), targetModel);
-                    app.getRedisManager().setData(targetModel.getKey(), targetModel.getValueJson(), targetModel.getAddon());
                 } else {
                     targetModel = dataModelOpt.get();
                 }
@@ -333,16 +341,17 @@ public abstract class DataAddon {
                 if (dataModelOpt.isEmpty()) {
                     DataModel newModel = createModel(modelInit(rawInput));
                     app.getDataContainer().addModelDirect(newModel.getKey(), newModel);
-                    app.getRedisManager().setData(newModel.getKey(), newModel.getValueJson(), newModel.getAddon());
                     pushMetrics(new NexusJsonDataContainer(newModel.getValueJson()));
                 } else {
                     DataModel existing = dataModelOpt.get();
                     String    updated  = modelInitComp(rawInput);
+
+                    // setValueJson artık sadece local state + dirty flag günceller.
                     existing.setValueJson(updated);
 
-                    RedisManager redis = app.getRedisManager();
-                    redis.setData(existing.getKey(), updated, existing.getAddon());
-                    redis.renewTTL(existing.getKey(), getCacheTTL());
+                    // Redis'e TEK gerçek yazım burada — setData zaten TTL'i yeniliyor,
+                    // ayrıca renewTTL çağırmaya gerek yok.
+                    app.getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
                     pushMetrics(new NexusJsonDataContainer(updated));
                 }
 
@@ -502,17 +511,22 @@ public abstract class DataAddon {
             }
 
             // L2 — Redis cache
-            if (redis.exists(keyTag)) {
-                String redisJson = redis.getData(keyTag).get();
+            // NOT: exists() + getData() arasında key expire olabilir (TOCTOU).
+            // Bu yüzden ayrı bir exists() kontrolü yerine doğrudan getData()'nın
+            // Optional dönüşüne güveniyoruz — race condition'ı ortadan kaldırır.
+            Optional<String> redisOpt = redis.getData(keyTag);
+            if (redisOpt.isPresent()) {
+                String redisJson = redisOpt.get();
 
-                if (redisJson == null || !redisJson.trim().startsWith("{")) {
+                if (!redisJson.trim().startsWith("{")) {
                     LOGGER.warning("[DataAddon/" + addonName() + "] Redis'te bozuk veri tespit edildi, siliniyor. key=" + keyTag);
                     redis.deleteData(keyTag);
                 } else {
                     DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
                             modelInitComp(redisJson), this, specificValue);
                     app.getDataContainer().addModelFix(keyTag, m);
-                    redis.renewTTL(keyTag, getCacheTTL());
+                    // addModelFix -> writeToL1AndRedis zaten setData ile TTL'i yeniden
+                    // ayarlıyor; burada ayrıca renewTTL çağırmaya gerek yok.
                     pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
                     return Optional.of(m);
                 }

@@ -63,6 +63,9 @@ public class Main {
     }
 
     private static void saveConfig(String redisHost,
+                                   int redisPort,
+                                   String redisUser,
+                                   String redisPass,
                                    String mongoUri,
                                    boolean metricsEnabled,
                                    String influxUrl,
@@ -72,6 +75,9 @@ public class Main {
         try {
             JSONObject cfg = new JSONObject();
             cfg.put("redisHost",       redisHost);
+            cfg.put("redisPort",       redisPort);
+            cfg.put("redisUser",       redisUser  == null ? "" : redisUser);
+            cfg.put("redisPass",       redisPass  == null ? "" : redisPass);
             cfg.put("mongoUri",        mongoUri);
             cfg.put("metricsEnabled",  metricsEnabled);
             if (metricsEnabled && influxUrl != null) {
@@ -130,10 +136,21 @@ public class Main {
         }
     }
 
+
     private static void autoConnect(JSONObject cfg) {
         String redisHost      = cfg.optString("redisHost",  "127.0.0.1");
+        int redisPort         = cfg.optInt("redisPort", 6379);
+        String redisUser      = cfg.optString("redisUser", "");
+        String redisPass      = cfg.optString("redisPass", "");
         String mongoUri       = cfg.optString("mongoUri",   "mongodb://localhost:27017");
         boolean metricsEnabled = cfg.optBoolean("metricsEnabled", false);
+
+        final String fRedis    = redisHost;
+        final int fRedisPort   = redisPort;
+        final String fRedisUser = redisUser;
+        final String fRedisPass = redisPass;
+        final String fMongo    = mongoUri;
+        final boolean fMetrics = metricsEnabled;
 
         String influxUrl    = null;
         String influxToken  = null;
@@ -148,24 +165,25 @@ public class Main {
             influxBucket = influx.optString("bucket");
         }
 
-        final String fRedis   = redisHost;
-        final String fMongo   = mongoUri;
-        final boolean fMetrics = metricsEnabled;
         final String fUrl     = influxUrl;
         final String fToken   = influxToken;
         final String fOrg     = influxOrg;
         final String fBucket  = influxBucket;
+        // ...
 
         new Thread(() -> {
             try {
                 redirectOut();
-                NexusApplication application = new NexusApplication(fRedis, fMongo, fMetrics, fUrl, fToken, fOrg, fBucket);
+                NexusApplication application = new NexusApplication(
+                        fRedis, fRedisPort, fRedisUser, fRedisPass,
+                        fMongo, fMetrics, fUrl, fToken, fOrg, fBucket
+                );
                 SwingUtilities.invokeLater(() -> {
                     cardLayout.show(mainPanel, "DASH");
                     startTimers();
                     goOnline();
                 });
-
+                // ...
             } catch (Exception ex) {
                 SwingUtilities.invokeLater(() -> {
                     cardLayout.show(mainPanel, "LOGIN");
@@ -220,13 +238,24 @@ public class Main {
         JSONObject existingCfg = loadConfig();
         String defaultRedis = existingCfg != null ? existingCfg.optString("redisHost", "127.0.0.1")    : "127.0.0.1";
         String defaultMongo = existingCfg != null ? existingCfg.optString("mongoUri",  "mongodb://localhost:27017") : "mongodb://localhost:27017";
+        int defaultRedisPort = existingCfg != null ? existingCfg.optInt("redisPort", 6379) : 6379;
+        String defaultRedisUser = existingCfg != null ? existingCfg.optString("redisUser", "") : "";
+        String defaultRedisPass = existingCfg != null ? existingCfg.optString("redisPass", "") : "";
         boolean defaultMetrics = existingCfg != null && existingCfg.optBoolean("metricsEnabled", false);
 
         c.insets=new Insets(5,0,5,0);
         NField rField = new NField(defaultRedis, "REDIS HOST", CYAN);
+
+        NField rPortField = new NField(String.valueOf(defaultRedisPort), "REDIS PORT", CYAN);
+        NField rUserField = new NField(defaultRedisUser, "REDIS USER (opsiyonel)", CYAN);
+        NField rPassField = new NField(defaultRedisPass, "REDIS PASSWORD", CYAN); // NOT: alttaki not'a bak
+
         NField mField = new NField(defaultMongo, "MONGO URI", BLUE);
         c.gridy=3; card.add(rField, c);
-        c.gridy=4; card.add(mField, c);
+        c.gridy=4; card.add(rPortField, c);
+        c.gridy=5; card.add(rUserField, c);
+        c.gridy=6; card.add(rPassField, c);
+        c.gridy=7; card.add(mField, c);
 
         JCheckBox metricsTick = new JCheckBox("ENABLE NEXUS METRICS (INFLUXDB)");
         metricsTick.setSelected(defaultMetrics);
@@ -234,15 +263,15 @@ public class Main {
         metricsTick.setOpaque(false);
         metricsTick.setFocusPainted(false);
         metricsTick.setFont(new Font("Monospaced", Font.BOLD, 11));
-        c.gridy=5; c.insets=new Insets(15,0,5,0); card.add(metricsTick, c);
+        c.gridy=8; c.insets=new Insets(15,0,5,0); card.add(metricsTick, c);
 
         NBtn btn = new NBtn("INITIALIZE NEXUS ENGINE", CYAN);
         btn.setPreferredSize(new Dimension(0, 52));
-        c.gridy=6; c.insets=new Insets(20,0,0,0); card.add(btn, c);
+        c.gridy=9; c.insets=new Insets(20,0,0,0); card.add(btn, c);
 
         JLabel footer = lbl("AUTHORIZED ACCESS ONLY — NEXUS SYSTEMS", 9, TEXT_LO, false);
         footer.setHorizontalAlignment(SwingConstants.CENTER);
-        c.gridy=7; c.insets=new Insets(15,0,0,0); card.add(footer, c);
+        c.gridy=10; c.insets=new Insets(15,0,0,0); card.add(footer, c);
 
         btn.addActionListener(e -> {
             final String[][] influxStorage = { null };
@@ -303,14 +332,22 @@ public class Main {
                         bucket = influxStorage[0][3];
                     }
 
+                    int parsedPort;
+                    try {
+                        parsedPort = Integer.parseInt(rPortField.val().trim());
+                    } catch (NumberFormatException nfe) {
+                        parsedPort = 6379; // geçersiz girişte varsayılana düş
+                    }
+
                     new NexusApplication(
-                            rField.val(),
+                            rField.val(), parsedPort, rUserField.val(), rPassField.val(),
                             mField.val(),
                             metricsTick.isSelected(),
                             url, token, org, bucket
                     );
 
-                    saveConfig(rField.val(), mField.val(), metricsTick.isSelected(),
+                    saveConfig(rField.val(), parsedPort, rUserField.val(), rPassField.val(),
+                            mField.val(), metricsTick.isSelected(),
                             url, token, org, bucket);
 
                     SwingUtilities.invokeLater(() -> {
