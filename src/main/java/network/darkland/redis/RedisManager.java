@@ -36,10 +36,6 @@ public class RedisManager {
     private final String redisUser;
     private final String redisPass;
 
-    /**
-     * @param redisUser boş string veya null olabilir (ACL kullanılmıyorsa)
-     * @param redisPass boş string veya null olabilir; boşsa parolasız bağlanır (uyarı loglanır)
-     */
     public RedisManager(NexusApplication application, String redisHost, int redisPort,
                         String redisUser, String redisPass) {
         this.application = application;
