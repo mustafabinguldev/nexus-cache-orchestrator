@@ -1,164 +1,143 @@
-### Central Data Orchestrator for Distributed Minecraft Servers (Redis + MongoDB)
+# ⬡ Nexus Cache Orchestrator
 
-> *"The central brain between your distributed Minecraft infrastructure and your persistent data layer."*
+**A central data orchestration layer for distributed server networks, built on Redis Pub/Sub, MongoDB, and a Spring-powered management interface.**
+
+> *"The single source of truth between your distributed infrastructure and your persistent data layer."*
 
 [![Java](https://img.shields.io/badge/Java-17+-blue?style=flat-square&logo=java)](https://www.java.com)
+[![Spring](https://img.shields.io/badge/Spring-Boot-brightgreen?style=flat-square&logo=spring)](https://spring.io)
 [![Redis](https://img.shields.io/badge/Redis-Message%20Broker-red?style=flat-square&logo=redis)](https://redis.io)
 [![MongoDB](https://img.shields.io/badge/MongoDB-Persistence-green?style=flat-square&logo=mongodb)](https://www.mongodb.com)
+[![License](https://img.shields.io/badge/license-MIT-lightgrey?style=flat-square)](#-license)
 
 ---
 
 ## 📖 Table of Contents
 
-- [What is Nexus Core?](#-what-is-nexus-core)
+- [What is Nexus?](#-what-is-nexus)
 - [System Architecture](#-system-architecture)
-- [Data Flow Diagram](#-data-flow-diagram)
+- [Data Flow](#-data-flow)
 - [Core Components](#-core-components)
+- [Web Interface (Spring)](#-web-interface-spring)
 - [Getting Started](#-getting-started)
-- [Writing an Addon](#️-writing-an-addon)
+- [Writing an Addon](#-writing-an-addon)
 - [DataAddon API Reference](#-dataaddon-api-reference)
-- [Annotations Reference](#-annotations-reference)
-- [Request Lifecycle](#-request-lifecycle)
 - [Protocol & Packet Structure](#-protocol--packet-structure)
 - [Redis Key Strategy](#-redis-key-strategy)
-- [Dashboard & Monitoring](#-dashboard--monitoring)
-- [Configuration](#️-configuration)
+- [Configuration](#-configuration)
 - [Best Practices](#-best-practices)
+- [Version History](#-version-history)
+- [License](#-license)
 
 ---
 
-## 🧠 What is Nexus Core?
+## 🧠 What is Nexus?
 
-**Nexus Core** is a standalone Java application that acts as the **central orchestration layer** for a distributed Minecraft network. Instead of every Spigot server connecting directly to MongoDB and managing its own cache, all data operations are delegated to Nexus Core through a **Redis pub/sub message bus**.
+**Nexus Cache Orchestrator** is a standalone Java application that acts as the **central orchestration layer** for a distributed server network. Instead of every node connecting directly to MongoDB and managing its own cache, all data operations are delegated to Nexus through a **Redis Pub/Sub message bus**.
 
-This design solves three critical problems at scale:
+This design solves three recurring problems at scale:
 
-| Problem | Without Nexus Core | With Nexus Core |
+| Problem | Without Nexus | With Nexus |
 |---|---|---|
-| **DB Connections** | Every server holds its own connection pool | Single optimized connection pool |
-| **Cache Coherency** | Each server has its own stale cache | Centralized Redis cache, always consistent |
-| **Data Logic** | Duplicated across every server's codebase | Defined once in a `DataAddon`, shared everywhere |
+| **Database connections** | Every node holds its own connection pool | A single, optimized connection pool |
+| **Cache coherency** | Each node keeps its own, potentially stale cache | One centralized Redis cache, always consistent |
+| **Data logic duplication** | Repeated across every node's codebase | Defined once in a `DataAddon`, shared everywhere |
 
-Think of it as a **microservice** purpose-built for Minecraft infrastructure — Nexus Core owns all data, and your Spigot servers are just thin clients.
+Nexus behaves like a purpose-built **microservice** for your infrastructure: it owns all data, while every connected node acts as a thin, stateless client.
 
 ---
 
 ## 🏗️ System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                                                                 │
-│                                                                 │
-│   ┌──────────────┐    ┌──────────────┐    ┌──────────────┐     │
-│   │  Spigot #1   │    │  Spigot #2   │    │  Spigot #3   │     │
-│   │  (Lobby)     │    │  (PvP)       │    │  (Survival)  │     │
-│   └──────┬───────┘    └──────┬───────┘    └──────┬───────┘     │
-│          │                   │                   │             │
-│          └───────────────────┼───────────────────┘             │
-│                              │  Redis Pub/Sub                   │
-│                    ┌─────────▼──────────┐                      │
-│                    │    Redis Broker     │                      │
-│                    │  (Message Bus)      │                      │
-│                    └─────────┬──────────┘                      │
-│                              │                                  │
-│                    ┌─────────▼──────────┐                      │
-│                    │   ⬡ NEXUS CORE ⬡   │  ← YOU ARE HERE     │
-│                    │                    │                      │
-│                    │  ┌──────────────┐  │                      │
-│                    │  │ AddonRegistry│  │                      │
-│                    │  │  Addon #100  │  │                      │
-│                    │  │  Addon #200  │  │                      │
-│                    │  │  Addon #500  │  │                      │
-│                    │  └──────┬───────┘  │                      │
-│                    └─────────┼──────────┘                      │
-│                              │  CRUD Operations                 │
-│                    ┌─────────▼──────────┐                      │
-│                    │      MongoDB        │                      │
-│                    │  ┌───────────────┐ │                      │
-│                    │  │ nexus_core_db │ │                      │
-│                    │  │  → players    │ │                      │
-│                    │  │  → guilds     │ │                      │
-│                    │  │  → economy    │ │                      │
-│                    │  └───────────────┘ │                      │
-│                    └────────────────────┘                      │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────────┐    ┌──────────────┐    ┌──────────────┐
+│   Node #1    │    │   Node #2    │    │   Node #3    │
+└──────┬───────┘    └──────┬───────┘    └──────┬───────┘
+       │                   │                   │
+       └───────────────────┼───────────────────┘
+                            │  Redis Pub/Sub
+                  ┌─────────▼──────────┐
+                  │    Redis Broker     │
+                  │   (Message Bus)     │
+                  └─────────┬──────────┘
+                            │
+                  ┌─────────▼──────────┐
+                  │   ⬡ NEXUS CORE ⬡    │
+                  │                    │
+                  │  ┌──────────────┐  │
+                  │  │ProtocolHandler│  │
+                  │  │  Addon #100  │  │
+                  │  │  Addon #200  │  │
+                  │  │  Addon #500  │  │
+                  │  └──────┬───────┘  │
+                  └─────────┼──────────┘
+                            │  CRUD Operations
+                  ┌─────────▼──────────┐
+                  │      MongoDB        │
+                  │   nexus_core_db     │
+                  └────────────────────┘
 ```
+
+Nexus itself exposes a **Spring-based management console** alongside the orchestration engine, giving operators visibility into the running system without having to read raw logs (see [Web Interface](#-web-interface-spring)).
 
 ---
 
-## 🔄 Data Flow Diagram
+## 🔄 Data Flow
 
 Every interaction follows a strict **request → orchestrate → respond** lifecycle:
 
-```
-Spigot Server                Redis                  Nexus Core               MongoDB
-     │                         │                        │                       │
-     │  1. PUBLISH packet       │                        │                       │
-     │  {                       │                        │                       │
-     │    protocol: 500,        │                        │                       │
-     │    source: "pvp-1",      │                        │                       │
-     │    type: GET_DATA,       │                        │                       │
-     │    data: {name:"Steve"}  │                        │                       │
-     │  }                       │                        │                       │
-     │─────────────────────────►│                        │                       │
-     │                          │  2. Route to listener  │                       │
-     │                          │───────────────────────►│                       │
-     │                          │                        │  3. Lookup AddonRegistry
-     │                          │                        │     protocol 500 → ExampleAddon
-     │                          │                        │                       │
-     │                          │                        │  4. handleRequest()   │
-     │                          │                        │     pre-check / reject│
-     │                          │                        │                       │
-     │                          │                        │  5. Check Redis cache │
-     │                          │                        │     key: "example_addon_Steve"
-     │                          │                        │──── CACHE HIT? ──────►│
-     │                          │                        │◄─── return cached ────│
-     │                          │                        │                       │
-     │                          │                        │  (CACHE MISS)         │
-     │                          │                        │  6. MongoDB query     │
-     │                          │                        │  db.players.findOne(  │
-     │                          │                        │    {name: "Steve"}    │
-     │                          │                        │  )                    │
-     │                          │                        │──────────────────────►│
-     │                          │                        │◄── Document ──────────│
-     │                          │                        │                       │
-     │                          │                        │  7. Write to cache    │
-     │                          │  8. PUBLISH response   │                       │
-     │                          │◄───────────────────────│                       │
-     │  9. Receive response     │                        │                       │
-     │◄─────────────────────────│                        │                       │
-     │                          │                        │                       │
-```
+1. A node **publishes** a packet on Redis containing a `protocol` ID, a `source` identifier, a `type` (e.g. `GET_DATA`), and a `data` payload.
+2. Redis routes the message to the Nexus listener.
+3. Nexus resolves the target `DataAddon` from the `ProtocolHandler` registry using the `protocol` ID.
+4. `handleRequest()` runs as a pre-check; it can reject the operation before any I/O happens.
+5. Nexus checks the **Redis (L2) cache** first.
+    - On a cache **hit**, the cached document is returned immediately.
+    - On a cache **miss**, Nexus queries **MongoDB**, then writes the result back into the cache.
+6. The response is serialized and published back to the requesting node's channel.
 
-### Request Types
-| Type | Description | MongoDB Operation | Cache |
-|------|-------------|-------------------|-------|
-| `GET_DATA` | Fetch a document by ID field | `findOne()` | Read-through |
-| `SET_DATA` | Insert or update a document | `replaceOne(upsert)` | Write-through |
-| `REMOVE_DATA` | Remove a document by ID | `deleteOne()` | Invalidate |
-| `INCREMENT_DATA` | Atomically increment a numeric field on an existing document | `findOne()` + in-memory mutate | Write-through |
+### Supported Request Types
+
+| Type | Description | MongoDB Operation | Cache Behavior |
+|---|---|---|---|
+| `GET_DATA` | Fetch a document by its ID field | `findOne()` | Read-through |
+| `SET_DATA` | Insert or fully replace a document | `replaceOne(upsert)` | Write-through |
 | `UPDATE_DATA` | Partially update fields on an existing document | `updateOne()` | Write-through |
-| `BROADCAST` | Push a data payload to a target server over Redis pub/sub | None | Bypass |
-| `LOAD_CACHE` | Pre-load a document into memory cache by ID | `findOne()` | Warm |
+| `INCREMENT_DATA` | Atomically increment a numeric field | `findOne()` + mutate | Write-through |
+| `REMOVE_DATA` | Delete a document by ID | `deleteOne()` | Invalidate |
+| `LOAD_CACHE` | Pre-warm a document into memory | `findOne()` | Warm |
+| `BROADCAST` | Push a payload to a target node over Redis | — | Bypass |
 
 ---
 
 ## 🧩 Core Components
 
 ### `NexusApplication`
-The main entry point and bootstrapper. Initializes the Redis connection, MongoDB client, and loads all registered `DataAddon` instances into the registry. Exposes `getDataSize()` and `getAddonSize()` for the live dashboard.
+The main entry point and bootstrapper. Initializes the Redis connection, MongoDB client, and loads every registered `DataAddon` into the registry. It is marked `volatile` to stay safe across highly concurrent, multi-threaded access, and exposes runtime metrics such as `getDataSize()` and `getAddonSize()` for the monitoring layer.
 
 ### `DataAddon`
-The abstract base class that defines a **data module**. Each addon maps to exactly one MongoDB collection and one Redis key namespace. You extend this class to add new data types to the network.
+The abstract base class that defines a **data module**. Each addon maps to exactly one MongoDB collection and one Redis key namespace. Extend this class whenever you need to introduce a new type of data into the network.
 
 ### `ProtocolHandler`
-A thread-safe `Map<Integer, DataAddon>` keyed on `addonId()`. When a packet arrives with `protocol: 500`, the registry looks up the corresponding addon in O(1) and delegates the operation.
+A thread-safe registry (`Map<Integer, DataAddon>`) keyed on `addonId()`. When a packet arrives with a given `protocol`, the handler resolves the matching addon in O(1) and delegates the operation to it.
 
 ### `NexusJsonDataContainer`
-A thin wrapper around a JSON object that is passed into `handleRequest()`. Provides helper methods for reading typed values from the packet payload without null-pointer noise.
+A lightweight wrapper around the JSON payload passed into `handleRequest()`, providing null-safe, typed accessors for reading values out of the incoming packet.
 
-### Dashboard (`Main.java`)
-A Swing-based live monitoring UI built entirely with Java2D — no external UI frameworks. Displays real-time JVM CPU, process RAM, cache object count, and addon count with animated donut charts and scrolling line graphs.
+### Monitoring & Metrics
+Nexus tracks JVM CPU load, heap usage, live cache object counts, and active addon counts in real time, feeding both the local dashboard and the web interface described below.
+
+---
+
+## 🖥️ Web Interface (Spring)
+
+Nexus now ships with a **Spring-based web interface** that exposes the orchestrator's live state through a browser instead of requiring direct access to the host machine. It sits alongside the core Redis/MongoDB engine and gives operators a modern way to observe and manage the running instance:
+
+- **Live system overview** — CPU load, JVM heap usage, cache object count, and active addon count, sourced from the same metrics the engine already tracks.
+- **Addon registry view** — inspect which `DataAddon` instances are currently registered and which protocol IDs they own.
+- **Connection status** — at-a-glance health of the Redis and MongoDB connections, including the watchdog/health-check state introduced in earlier releases.
+- **Web-first access** — no need to be on the host machine or attached to the Swing dashboard to check on the system.
+
+> ℹ️ The Spring layer is additive: it does not replace the Redis Pub/Sub protocol that nodes use to talk to Nexus — it is a management and observability surface on top of the same engine.
 
 ---
 
@@ -169,22 +148,23 @@ A Swing-based live monitoring UI built entirely with Java2D — no external UI f
 - Java 17+
 - A running Redis instance (`redis-server`)
 - A running MongoDB instance (`mongod`)
+- Maven
 
 ### Build & Run
 
 ```bash
 # Clone the repository
-git clone https://github.com/mustafabinguldev/nexus-core.git
-cd nexus-core
+git clone https://github.com/mustafabinguldev/nexus-cache-orchestrator.git
+cd nexus-cache-orchestrator
 
 # Build with Maven
 mvn clean package -DskipTests
 
 # Run the application
-java -jar target/nexus-core-4.0.jar
+java -jar target/nexus-cache-orchestrator.jar
 ```
 
-The **Nexus Core Dashboard** will launch. Fill in your Redis host, MongoDB URI, and server port, then click **INITIALIZE NEXUS ENGINE**.
+On first launch, provide your Redis host, MongoDB URI, and server port. Once configured, these values are persisted, and subsequent startups connect automatically without manual input.
 
 ### Default Configuration
 
@@ -198,22 +178,18 @@ The **Nexus Core Dashboard** will launch. Fill in your Redis host, MongoDB URI, 
 
 ## 🛠️ Writing an Addon
 
-An addon is the fundamental unit of data in Nexus Core. Each addon represents a single collection of documents, defines the schema via annotations, and optionally intercepts requests before they are processed.
+An addon is the fundamental unit of data in Nexus. Each addon represents a single collection of documents, declares its schema through annotations, and can optionally intercept requests before they're processed.
 
 ### Step 1 — Extend `DataAddon`
 
 ```java
-package network.darkland.addons;
+package your.package.addons;
 
-import network.darkland.protocol.DataAddon;
-import network.darkland.protocol.NexusJsonDataContainer;
-import network.darkland.protocol.backup.annotations.DbDataModels;
+import network.core.protocol.DataAddon;
+import network.core.protocol.NexusJsonDataContainer;
+import network.core.protocol.backup.annotations.DbDataModels;
 
 public class PlayerStatsAddon extends DataAddon {
-
-    // -------------------------------------------------------
-    //  IDENTITY
-    // -------------------------------------------------------
 
     @Override
     public int addonId() {
@@ -225,10 +201,6 @@ public class PlayerStatsAddon extends DataAddon {
         return "Player Stats";
     }
 
-    // -------------------------------------------------------
-    //  DATABASE TARGET
-    // -------------------------------------------------------
-
     @Override
     public String getDatabase() {
         return "nexus_core_db";
@@ -236,24 +208,16 @@ public class PlayerStatsAddon extends DataAddon {
 
     @Override
     public String getCollection() {
-        return "player_stats"; // db.player_stats
+        return "player_stats";
     }
-
-    // -------------------------------------------------------
-    //  CACHE NAMESPACE
-    // -------------------------------------------------------
 
     @Override
     public String cacheKeyHeaderTag() {
-        return "stats"; // Redis key: "stats:<value of @isId field>"
+        return "stats"; // Redis key: "stats:<id field value>"
     }
 
-    // -------------------------------------------------------
-    //  DATA MODEL
-    // -------------------------------------------------------
-
     @DbDataModels(isId = true)
-    private String uuid; // Primary key — used for both DB lookup and cache key
+    private String uuid;
 
     @DbDataModels(defaultValue = "0", isId = false)
     private int kills;
@@ -261,26 +225,14 @@ public class PlayerStatsAddon extends DataAddon {
     @DbDataModels(defaultValue = "0", isId = false)
     private int deaths;
 
-    @DbDataModels(defaultValue = "0", isId = false)
+    @DbDataModels(defaultValue = "0.0", isId = false)
     private double balance;
-
-    @DbDataModels(defaultValue = "false", isId = false)
-    private boolean isPremium;
-
-    // -------------------------------------------------------
-    //  REQUEST INTERCEPTOR
-    // -------------------------------------------------------
 
     @Override
     public boolean handleRequest(String source, RequestType requestType, NexusJsonDataContainer data) {
-        // 'source' is the server ID that sent the packet, e.g. "pvp-1"
-        // Return false to reject this request without processing it.
-
         if (requestType == RequestType.REMOVE_DATA) {
-            // Example: only allow deletes from the "admin" server
-            return source.equals("admin");
+            return source.equals("admin"); // Only allow deletes from the admin node
         }
-
         return true;
     }
 }
@@ -288,187 +240,63 @@ public class PlayerStatsAddon extends DataAddon {
 
 ### Step 2 — Register the Addon
 
-In your `NexusApplication` constructor or initialization block, register the addon:
-
 ```java
-// NexusApplication.java
 NexusApplication.getInstance().getProtocolHandler().registerAddon(new PlayerStatsAddon());
 ```
 
-That's it. Nexus Core will now automatically handle all `GET_DATA`, `SET_DATA`, `REMOVE_DATA` requests for protocol ID `100`, routing them to the `player_stats` MongoDB collection.
+That's it — Nexus will now automatically handle `GET_DATA`, `SET_DATA`, `UPDATE_DATA`, `INCREMENT_DATA`, and `REMOVE_DATA` requests for protocol `100`, routing them to the `player_stats` MongoDB collection with full Redis caching.
 
 ---
 
 ## 📚 DataAddon API Reference
 
-```java
-public abstract class DataAddon {
+| Method | Purpose |
+|---|---|
+| `addonId()` | Unique numeric protocol ID this addon owns |
+| `addonName()` | Human-readable name shown in logs and the web interface |
+| `getDatabase()` | Target MongoDB database |
+| `getCollection()` | Target MongoDB collection |
+| `cacheKeyHeaderTag()` | Prefix for Redis cache keys (`{tag}:{idValue}`) |
+| `getCacheTTL()` | Per-addon time-to-live for cached entries |
+| `handleRequest(...)` | Pre-processing hook; return `false` to reject a request |
 
-    /**
-     * The unique numeric ID for this addon.
-     * Remote clients send this as the `protocol` field in their packets.
-     * Must be unique — duplicate IDs will throw at startup.
-     */
-    public abstract int addonId();
-
-    /**
-     * Human-readable name shown in the dashboard and log output.
-     */
-    public abstract String addonName();
-
-    /**
-     * The MongoDB database name this addon operates on.
-     * Multiple addons can share the same database.
-     */
-    public abstract String getDatabase();
-
-    /**
-     * The MongoDB collection this addon reads and writes.
-     * Each addon should have its own dedicated collection.
-     */
-    public abstract String getCollection();
-
-    /**
-     * The prefix for Redis cache keys managed by this addon.
-     * Full key format: "{cacheKeyHeaderTag}:{idFieldValue}"
-     * Example: "stats:550e8400-e29b-41d4-a716-446655440000"
-     *
-     * Keep this short and unique to avoid key collisions
-     * between addons that share the same database.
-     */
-    public abstract String cacheKeyHeaderTag();
-
-    /**
-     * Called before every data operation.
-     *
-     * @param source      The server ID that originated the request (e.g. "pvp-1")
-     * @param requestType GET_DATA / SET_DATA / REMOVE_DATA / INCREMENT_DATA 
-     * @param data        The payload container from the incoming packet
-     * @return true  → process the request normally
-     *         false → reject and send an empty response back to source
-     */
-    public abstract boolean handleRequest(
-        String source,
-        RequestType requestType,
-        NexusJsonDataContainer data
-    );
-}
-```
-
----
-
-## 🏷️ Annotations Reference
-
-The `@DbDataModels` annotation is how Nexus Core discovers your schema at runtime via reflection. Every field you want persisted must be annotated.
-
-```java
-@DbDataModels(isId = true)
-private String uuid;
-```
+### `@DbDataModels` Annotation
 
 | Parameter | Type | Required | Description |
-|-----------|------|----------|-------------|
-| `isId` | `boolean` | ✅ Yes | Marks this field as the primary key. Used for MongoDB `findOne` queries and as the Redis cache key suffix. **Exactly one field per addon must have `isId = true`.** |
-| `defaultValue` | `String` | ✅ Yes (if `isId = false`) | The value written to MongoDB when this field is not present in the incoming packet. Must be a parseable string representation of the field's type. |
+|---|---|---|---|
+| `isId` | `boolean` | ✅ | Marks the field as the primary key. Exactly one field per addon must set this to `true`. |
+| `defaultValue` | `String` | ✅ if `isId = false` | Value written when the field is missing from the incoming packet. |
 
-### Supported Field Types
-
-| Java Type | `defaultValue` example |
-|-----------|------------------------|
-| `String` | `"unknown"` |
-| `int` / `Integer` | `"0"` |
-| `long` / `Long` | `"0"` |
-| `double` / `Double` | `"0.0"` |
-| `boolean` / `Boolean` | `"false"` |
-
----
-
-## 🔄 Request Lifecycle
-
-Understanding the exact order of operations is important for writing correct addon logic.
-
-```
-Incoming Redis Packet
-        │
-        ▼
-┌───────────────────┐
-│  Deserialize JSON  │
-│  Extract protocol  │
-└────────┬──────────┘
-         │
-         ▼
-┌───────────────────┐
-│  AddonRegistry    │      ┌─────────────┐
-│  lookup(protocol) │─────►│  Not found? │──► Log WARN, drop packet
-└────────┬──────────┘      └─────────────┘
-         │
-         ▼
-┌───────────────────┐
-│  handleRequest()  │      ┌─────────────┐
-│  (your code)      │─────►│  Returns    │──► Send empty response to source
-└────────┬──────────┘      │  false?     │
-         │                 └─────────────┘
-         │ true
-         ▼
-┌───────────────────┐
-│  Route by         │
-│  RequestType      │
-└────────┬──────────┘
-         │
-    ┌────┴────┬────────────┬──────────
-    ▼         ▼            ▼          
-  GET_DATA        SET_DATA        REMOVE_DATA    
-    │         │            │          
-    ▼         ▼            ▼          
- Check     Write to    Delete from  
- Redis     Mongo +     Mongo +      
- cache     Update      Invalidate   
-    │       cache       cache
-    ▼
- Cache hit?
-    │
-  No │
-    ▼
- Query Mongo
- Write cache
-    │
-    ▼
-Serialize response
-Publish to Redis
-(source channel)
-```
+Supported field types: `String`, `int`/`Integer`, `long`/`Long`, `double`/`Double`, `boolean`/`Boolean`.
 
 ---
 
 ## 📦 Protocol & Packet Structure
 
-### Inbound Packet (Spigot → Redis → Nexus)
+**Inbound packet (Node → Redis → Nexus):**
 
 ```json
 {
   "protocol": 100,
-  "source":   "pvp-1",
-  "type":     "GET_DATA",
-  "data": {
-    "uuid": "550e8400-e29b-41d4-a716-446655440000"
-  }
+  "source": "node-1",
+  "type": "GET_DATA",
+  "data": { "uuid": "550e8400-e29b-41d4-a716-446655440000" }
 }
 ```
 
-### Outbound Packet (Nexus → Redis → Spigot)
+**Outbound packet (Nexus → Redis → Node):**
 
 ```json
 {
   "protocol": 100,
-  "source":   "nexus",
-  "type":     "BROADCAST",
-  "target": "pvp-1",
+  "source": "nexus",
+  "type": "BROADCAST",
+  "target": "node-1",
   "data": {
-    "uuid":      "550e8400-e29b-41d4-a716-446655440000",
-    "kills":     142,
-    "deaths":    38,
-    "balance":   2500.75,
-    "isPremium": true
+    "uuid": "550e8400-e29b-41d4-a716-446655440000",
+    "kills": 142,
+    "deaths": 38,
+    "balance": 2500.75
   }
 }
 ```
@@ -477,51 +305,31 @@ Publish to Redis
 
 ## 🗝️ Redis Key Strategy
 
-Nexus Core uses a simple, predictable key schema to prevent collisions between addons, databases, and environments:
-
 ```
 {cacheKeyHeaderTag}_{idFieldValue}
 ```
 
-### Examples
-
-| Addon | `cacheKeyHeaderTag` | ID Field Value | Full Redis Key |
-|-------|---------------------|----------------|----------------|
+| Addon | `cacheKeyHeaderTag` | ID Value | Full Redis Key |
+|---|---|---|---|
 | `PlayerStatsAddon` | `stats` | `Steve` | `stats:Steve` |
 | `GuildAddon` | `guild` | `Darkland` | `guild:Darkland` |
 | `EconomyAddon` | `eco` | `550e8400...` | `eco:550e8400...` |
 
-> ⚠️ **Warning:** Two addons with the same `cacheKeyHeaderTag` will overwrite each other's cache entries. Always use unique prefixes.
+> ⚠️ **Warning:** Two addons sharing the same `cacheKeyHeaderTag` will overwrite each other's cache entries — always use unique prefixes.
 
-Cache entries are stored as serialized JSON strings and are automatically invalidated on `SET` and `DELETE` operations.
-
----
-
-## 📊 Dashboard & Monitoring
-
-The **Nexus Core Dashboard** (`Main.java`) provides real-time visibility into the running engine. All rendering is done with Java2D — no external libraries.
-![Project Screenshot](src/main/resources/nexus-core.png)
-
-### Dashboard Metrics
-
-| Card | Source | Description |
-|------|--------|-------------|
-| **CPU LOAD** | `OperatingSystemMXBean.getProcessCpuLoad()` | JVM process CPU only — not system-wide |
-| **PROCESS RAM** | `Runtime.totalMemory() - freeMemory()` | Current JVM heap usage in MB |
-| **CACHE OBJECTS** | `NexusApplication.getDataSize()` | Number of documents currently in Redis cache |
-| **ACTIVE ADDONS** | `NexusApplication.getAddonSize()` | Number of registered `DataAddon` instances |
+Cache entries are stored as serialized JSON and are automatically invalidated on `SET`/`UPDATE`/`REMOVE` operations, with Redis Keyspace Notifications keeping the in-memory (L1) layer in sync when keys expire.
 
 ---
 
 ## ⚙️ Configuration
 
-Configuration is entered via the login panel at startup. There is intentionally no config file — all connection parameters are live and validated at boot time.
-
 | Field | Example | Notes |
-|-------|---------|-------|
-| `REDIS HOST` | `127.0.0.1` | Hostname or IP of your Redis server. Port defaults to `6379`. |
-| `MONGO URI` | `mongodb://user:pass@host:27017` | Full MongoDB connection string. Supports auth and replica sets. |
-| `SERVER PORT` | `8080` | Port Nexus Core listens on for internal HTTP health checks. |
+|---|---|---|
+| `REDIS_HOST` | `127.0.0.1` | Hostname or IP of the Redis server. Port defaults to `6379`. |
+| `MONGO_URI` | `mongodb://user:pass@host:27017` | Full MongoDB connection string; supports auth and replica sets. |
+| `SERVER_PORT` | `8080` | Port used by internal health checks and the web interface. |
+
+Connection parameters are validated at boot and persisted after the first successful setup, enabling automatic reconnection on subsequent starts.
 
 ---
 
@@ -533,44 +341,38 @@ public final class AddonIds {
     public static final int PLAYER_STATS = 100;
     public static final int GUILDS       = 200;
     public static final int ECONOMY      = 300;
-    public static final int EXAMPLE      = 500;
 }
 ```
 
-**2. Use UUIDs as ID fields whenever possible**
-String names are not unique across time. A player rename will create a duplicate document. Prefer `uuid` as `isId = true`.
+**2. Prefer UUIDs over names as ID fields** — display names can change over time and create duplicate documents.
 
-**3. Keep `handleRequest()` fast**
-This method runs synchronously before the operation. Any blocking call here stalls the entire request. Do validation only — no I/O.
+**3. Keep `handleRequest()` fast** — it runs synchronously before the operation. Do validation only; never perform blocking I/O here.
 
-**4. Use distinct `cacheKeyHeaderTag` values**
-Even across different databases, share a global convention like `{moduleName}_{collection}` to guarantee uniqueness:
-```java
-// ✅ Good
-public String cacheKeyHeaderTag() { return "pvp_stats"; }
+**4. Use distinct, namespaced `cacheKeyHeaderTag` values** to avoid collisions across addons and databases.
 
-// ❌ Risky — collides with any other addon that uses "stats"
-public String cacheKeyHeaderTag() { return "stats"; }
-```
-
-**5. Never call MongoDB directly from a Spigot plugin**
-The entire point of Nexus Core is centralized data access. Bypassing it defeats cache coherency and defeats the architecture.
+**5. Never bypass Nexus** — connecting directly to MongoDB from a node defeats cache coherency and the entire purpose of the architecture.
 
 ---
+
+## 🕘 Version History
+
+| Version | Highlights |
+|---|---|
+| **1.4.2** | Thread-safety fixes for `NexusApplication`, `try-with-resources` for class loading, MongoDB race-condition fix, safer `Optional`-based metrics handling |
+| **1.4.1** | MongoDB connection timeouts, periodic health-check watchdog, fail-safe shutdown on critical DB failure |
+| **1.4.0** | Persistent connection configuration, zero-touch startup, global ranking & rank-finder protocols |
+| **1.3.0** | Real-time sync protocols, per-addon cache TTL, Redis Keyspace Notification-based L1/L2 invalidation, sliding expiration |
+| **1.2.0** | `INCREMENT_DATA` protocol, shared `ObjectMapper`, reflection caching, concurrency and null-safety fixes |
+| **1.1.0** | Redis-master cache hierarchy, TTL eviction recovery, batched reconciliation, O(1) ID lookups |
+| **1.0.0** | First stable release |
 
 ---
 
 ## 🛡️ License
 
-**Mustafa Bingül — All Rights Reserved**
+**MIT License** — see [LICENSE](./LICENSE) for details.
 
 ---
 
-<div align="center">
-
-**⬡ NEXUS CORE v1.2**
-
+**⬡ NEXUS CACHE ORCHESTRATOR**
 *Built for performance. Designed for scale.*
-
-</div>
-```
