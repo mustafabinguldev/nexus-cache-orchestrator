@@ -16,39 +16,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-/**
- * ════════════════════════════════════════════════════════════
- *  Veri Senkronizasyon Merkezi — RedisDataContainer
- * ════════════════════════════════════════════════════════════
- *
- * Katman hiyerarşisi (üstten alta öncelik):
- *
- *   ┌─────────────────────────────────┐
- *   │        Redis Cache (MASTER)     │  ← Tek doğru kaynak
- *   └────────────┬──────────┬─────────┘
- *                │          │
- *         pull 10s       flush 15s
- *                │          │
- *   ┌────────────▼──┐  ┌────▼──────────────┐
- *   │  L1 Cache     │  │     MongoDB        │
- *   │  (in-memory)  │  │  (persistent DB)   │
- *   └───────────────┘  └────────────────────┘
- *
- * Görev zamanlamaları:
- *   L1 Sync        →  10s   Redis değiştiyse L1'i günceller
- *   Auto Flush     →  15s   dirty key'leri Redis'ten Mongo'ya yazar
- *   Reconciliation →   3dk  Mongo ≠ Redis ise Redis doğruyu yazar
- *
- * Temel garantiler:
- *   • Redis her zaman master'dır; hiçbir görev Redis'i dışarıdan ezamaz.
- *   • dirtyKeys.remove(key) Mongo yazımı başarıyla tamamlandıktan SONRA yapılır.
- *     Hata durumunda key dirty listede kalır; bir sonraki flush'ta tekrar denenir.
- *   • removeModel() atomik — TOCTOU race yoktur.
- *   • Reconciliation Mongo'ya batch atarak 1000+ veride istek patlaması yaratmaz.
- *   • Tüm MongoDB çağrıları processMongoTask() ile AYRI bir thread havuzunda
- *     çalışır — Mongo yavaşladığında Redis trafiği (processTask) tıkanmaz.
- * ════════════════════════════════════════════════════════════
- */
 public class RedisDataContainer {
 
     private static final Logger LOGGER = Logger.getLogger(RedisDataContainer.class.getName());
@@ -137,7 +104,6 @@ public class RedisDataContainer {
 
         RedisManager rm = NexusApplication.getApplication().getRedisManager();
 
-        // Mongo'ya yazma bloklayan bir işlem — ayrı Mongo havuzunda çalıştır.
         rm.processMongoTask(() -> {
             for (String key : keysToFlush) {
                 DataModel model = keyToModel.get(key);

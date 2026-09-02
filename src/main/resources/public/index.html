@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Nexus Cache Orchestrator — Panel</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- LOGIN EKRANI -->
+<section id="login-screen" class="screen">
+  <div class="login-card">
+    <div class="lang-switch" id="lang-switch-login">
+      <button type="button" class="lang-btn" data-lang="tr">TR</button>
+      <button type="button" class="lang-btn" data-lang="en">EN</button>
+    </div>
+    <div class="wordmark">
+      <h1>NEXUS</h1>
+      <span class="dot" aria-hidden="true"></span>
+    </div>
+    <p class="subtitle" data-i18n="app.subtitle">cache orchestrator / panel</p>
+
+    <form id="login-form">
+      <label for="username" data-i18n="login.username">Kullanıcı adı</label>
+      <input type="text" id="username" autocomplete="username" required>
+
+      <label for="password" data-i18n="login.password">Parola</label>
+      <div class="password-row">
+        <input type="password" id="password" autocomplete="current-password" required>
+        <button type="button" id="toggle-password" class="toggle-visibility" data-i18n="login.show">GÖSTER</button>
+      </div>
+
+      <label class="remember-row">
+        <input type="checkbox" id="remember-username">
+        <span data-i18n="login.remember">Kullanıcı adımı hatırla</span>
+      </label>
+
+      <button type="submit" id="login-submit" data-i18n="login.submit">Giriş yap</button>
+      <p id="login-error" class="error-text" role="alert"></p>
+    </form>
+  </div>
+</section>
+
+<!-- DASHBOARD -->
+<section id="dashboard-screen" class="screen hidden">
+  <header class="topbar">
+    <div class="topbar-left">
+      <span class="wordmark">NEXUS <span class="path" data-i18n="topbar.panel">/ panel</span></span>
+      <span class="conn-status">
+          <span class="led" id="conn-led"></span>
+          <span id="conn-text">Bağlı</span>
+        </span>
+    </div>
+    <div class="topbar-right">
+      <span><span data-i18n="topbar.session">Oturum</span> <span id="session-duration">00:00</span></span>
+      <span class="clock" id="wall-clock">—</span>
+      <div class="lang-switch" id="lang-switch-topbar">
+        <button type="button" class="lang-btn" data-lang="tr">TR</button>
+        <button type="button" class="lang-btn" data-lang="en">EN</button>
+      </div>
+      <button id="logout-btn" class="secondary" data-i18n="topbar.logout">Çıkış</button>
+    </div>
+  </header>
+
+  <main>
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-top">
+          <span class="stat-label" data-i18n="stats.cached">Önbellekteki kayıt</span>
+        </div>
+        <span class="stat-value" id="stat-cached">—</span>
+        <span class="stat-delta" id="stat-cached-delta"></span>
+        <svg class="sparkline" id="spark-cached" width="100%" height="28" viewBox="0 0 160 28" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top">
+          <span class="stat-label" data-i18n="stats.addons">Yüklü eklenti</span>
+        </div>
+        <span class="stat-value" id="stat-addons">—</span>
+        <span class="stat-delta dim" data-i18n="stats.addons.sub">aktif modül sayısı</span>
+      </div>
+      <div class="stat-card" id="stat-dirty-card">
+        <div class="stat-top">
+          <span class="stat-label" data-i18n="stats.dirty">Bekleyen yazım (dirty)</span>
+        </div>
+        <span class="stat-value" id="stat-dirty">—</span>
+        <span class="stat-delta" id="stat-dirty-delta"></span>
+        <svg class="sparkline" id="spark-dirty" width="100%" height="28" viewBox="0 0 160 28" preserveAspectRatio="none"></svg>
+      </div>
+      <div class="stat-card">
+        <div class="stat-top">
+          <span class="stat-label">MongoDB</span>
+        </div>
+        <span class="stat-value" id="stat-mongo">—</span>
+        <span class="stat-delta dim" id="stat-mongo-sub">bağlantı durumu</span>
+      </div>
+    </div>
+
+    <section class="panel">
+      <div class="section-head" style="padding: 16px 16px 0;">
+        <h2><span data-i18n="addons.title">Eklentiler</span> <span class="count" id="addons-count"></span></h2>
+        <div class="section-tools">
+          <div class="search-box">
+            <input type="text" id="addon-search" data-i18n-placeholder="addons.search.placeholder" placeholder="ara… ( / )" autocomplete="off">
+          </div>
+          <button class="icon-btn" id="refresh-btn">
+            <span class="refresh-glyph">↻</span> <span data-i18n="addons.refresh">Yenile</span>
+          </button>
+        </div>
+      </div>
+      <div style="padding: 16px;"></div>
+      <table id="addons-table">
+        <thead>
+        <tr>
+          <th data-key="id" data-i18n="addons.th.id">ID</th>
+          <th data-key="name" data-i18n="addons.th.name">Ad</th>
+          <th data-key="className" data-i18n="addons.th.class">Sınıf</th>
+          <th data-key="database" data-i18n="addons.th.db">Veritabanı</th>
+          <th data-key="collection" data-i18n="addons.th.collection">Koleksiyon</th>
+          <th data-key="cacheTTL" data-i18n="addons.th.ttl">Cache TTL</th>
+        </tr>
+        </thead>
+        <tbody id="addons-body">
+        <tr><td colspan="6" class="dim empty-cell" data-i18n="addons.loading">Yükleniyor…</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="panel">
+      <div class="section-head" style="padding: 16px 16px 0;">
+        <h2 data-i18n="log.title">Olay günlüğü</h2>
+      </div>
+      <div style="padding: 8px 0 0;"></div>
+      <div class="log-list" id="event-log"></div>
+    </section>
+  </main>
+
+  <footer class="statusbar">
+    <span><span data-i18n="footer.lastUpdate">Son güncelleme:</span> <span id="last-updated">—</span></span>
+    <span id="next-refresh-line">
+        <span data-i18n="footer.nextRefresh">Sonraki yenileme:</span> <span id="next-refresh">—</span>
+        <button class="refresh-toggle" id="autorefresh-toggle">duraklat</button>
+      </span>
+    <span><span data-i18n="footer.shortcuts">Kısayollar:</span> <kbd>/</kbd> <span data-i18n="footer.shortcut.search">ara</span>, <kbd>r</kbd> <span data-i18n="footer.shortcut.refresh">yenile</span></span>
+  </footer>
+</section>
+
+<div id="toast-stack" aria-live="polite"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

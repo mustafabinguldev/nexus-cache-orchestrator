@@ -32,11 +32,6 @@ public class NexusApplication {
     private final MongoManager mongoManager;
     private final InfluxDBManager influxDBManager;
 
-    /**
-     * @param redisUser boş/null olabilir (Redis ACL kullanılmıyorsa)
-     * @param redisPass boş/null olabilir — ama üretimde MUTLAKA ayarlanmalı.
-     *                   Boş bırakılırsa RedisManager parolasız bağlanır ve uyarı loglar.
-     */
     public NexusApplication(
             String redisHost,
             int redisPort,
@@ -56,7 +51,6 @@ public class NexusApplication {
         this.dataContainer   = new RedisDataContainer();
         this.mongoManager    = new MongoManager(mongoUri);
 
-        // İlk bağlantı kontrolü — Swing dialog doğru thread'den çağrılıyor
         this.redisManager.processTask(() -> {
             if (!mongoManager.verifyConnection()) {
                 SwingUtilities.invokeLater(() ->
@@ -71,7 +65,6 @@ public class NexusApplication {
             }
         });
 
-        // Periyodik kontrol — initial delay 10s, ilk processTask ile çakışmaz
         this.redisManager.scheduleTask(() -> {
             if (!mongoManager.verifyConnection()) {
                 SwingUtilities.invokeLater(() ->
@@ -104,7 +97,6 @@ public class NexusApplication {
         }, "Nexus-Shutdown-Hook"));
     }
 
-    /** Geriye dönük uyumluluk: auth olmadan, varsayılan port 6379 ile bağlanır. */
     public NexusApplication(
             String redisHost,
             String mongoUri,
@@ -120,29 +112,49 @@ public class NexusApplication {
 
     private void loadAddons() {
         try {
-            URI jarUri = NexusApplication.class
-                    .getProtectionDomain()
-                    .getCodeSource()
-                    .getLocation()
-                    .toURI();
-
-            File jarFileDir  = new File(jarUri).getParentFile();
-            File addonFolder = new File(jarFileDir, "addons");
+            File addonFolder = new File("addons");
 
             if (!addonFolder.exists()) {
-                addonFolder.mkdirs();
+                if (!addonFolder.mkdirs()) {
+                    LOGGER.severe("Addon klasörü oluşturulamadı: "
+                            + addonFolder.getAbsolutePath());
+                    return;
+                }
+
+                LOGGER.info("Addon klasörü oluşturuldu: "
+                        + addonFolder.getAbsolutePath());
                 return;
             }
 
-            File[] files = addonFolder.listFiles((dir, name) -> name.endsWith(".jar"));
-            if (files == null) return;
+            if (!addonFolder.isDirectory()) {
+                LOGGER.severe("Addon yolu bir klasör değil: "
+                        + addonFolder.getAbsolutePath());
+                return;
+            }
+
+            File[] files = addonFolder.listFiles(
+                    (dir, name) -> name.toLowerCase().endsWith(".jar")
+            );
+
+            if (files == null) {
+                LOGGER.warning("Addon klasörü okunamadı: "
+                        + addonFolder.getAbsolutePath());
+                return;
+            }
+
+            LOGGER.info("Addon klasörü: "
+                    + addonFolder.getAbsolutePath());
 
             for (File file : files) {
                 loadJar(file);
             }
 
         } catch (Exception e) {
-            LOGGER.severe("Addon klasörü yüklenirken hata: " + e.getMessage());
+            LOGGER.log(
+                    java.util.logging.Level.SEVERE,
+                    "Addon klasörü yüklenirken hata",
+                    e
+            );
         }
     }
 
@@ -184,8 +196,6 @@ public class NexusApplication {
             LOGGER.warning("JAR yüklenemedi: " + file.getName() + " — " + e.getMessage());
         }
     }
-
-    // ——— Getters ———
 
     public ProtocolHandler getProtocolHandler() {
         return protocolHandler;

@@ -1,17 +1,17 @@
 package network.darkland.protocol;
 
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
 public class ProtocolHandler {
 
-    private ConcurrentHashMap<Integer, DataAddon> addons;
+    private final ConcurrentHashMap<Integer, DataAddon> addons;
 
     public ProtocolHandler() {
         addons = new ConcurrentHashMap<>();
     }
-
 
     public Optional<DataAddon> getAddonById(int id) {
         DataAddon addon = addons.get(id);
@@ -26,7 +26,7 @@ public class ProtocolHandler {
             return;
         }
 
-        System.out.println(addon.getClass().getName()+" Protocol Id: "+addon.addonId());
+        System.out.println(addon.getClass().getName() + " Protocol Id: " + addon.addonId());
 
         addons.put(addon.addonId(), addon);
     }
@@ -37,5 +37,7 @@ public class ProtocolHandler {
                 .toList();
     }
 
-
+    public Collection<DataAddon> getAllAddons() {
+        return addons.values();
+    }
 }
