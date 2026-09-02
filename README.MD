@@ -2,10 +2,10 @@
 
 > *"The central brain between your distributed Minecraft infrastructure and persistent data layer."*
 
-[Java](https://www.java.com/) ([image](https://img.shields.io/badge/Java-17+-blue?style=flat-square&logo=java))
-[Redis](https://redis.io/) ([image](https://img.shields.io/badge/Redis-Message%20Broker-red?style=flat-square&logo=redis))
-[MongoDB](https://www.mongodb.com/) ([image](https://img.shields.io/badge/MongoDB-Persistence-green?style=flat-square&logo=mongodb))
-[Security](#-security-layer-new) ([image](https://img.shields.io/badge/Security-HMAC%20%2B%20Anti--Replay-orange?style=flat-square))
+[Java](https://www.java.com/) 
+[Redis](https://redis.io/)
+[MongoDB](https://www.mongodb.com/)
+[Security](#-security-layer-new)
 
 ---
 
@@ -14,7 +14,7 @@
 * [What is Nexus Core?](#-what-is-nexus-core)
 * [System Architecture](#️-system-architecture)
 * [Data Flow](#-data-flow)
-* [🔐 Security Layer (New)](#-security-layer-new)
+* [Security Layer (New)](#-security-layer-new)
 * [Core Components](#-core-components)
 * [Version History / Changelog](#-version-history--changelog)
 * [Getting Started](#-getting-started)
