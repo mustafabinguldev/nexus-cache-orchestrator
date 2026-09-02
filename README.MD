@@ -561,9 +561,9 @@ When the security layer is enabled, every packet must contain the `sig`, `timest
 
 | Addon              | `cacheKeyHeaderTag` | ID Field Value | Full Redis Key    |
 | ------------------ | ------------------- | -------------- | ----------------- |
-| `PlayerStatsAddon` | `stats`             | `Steve`        | `stats:Steve`     |
-| `GuildAddon`       | `guild`             | `Darkland`     | `guild:Darkland`  |
-| `EconomyAddon`     | `eco`               | `550e8400...`  | `eco:550e8400...` |
+| `PlayerStatsAddon` | `stats`             | `Steve`        | `stats_Steve`     |
+| `GuildAddon`       | `guild`             | `Darkland`     | `guild_Darkland`  |
+| `EconomyAddon`     | `eco`               | `550e8400...`  | `eco_550e8400...` |
 
 > ⚠️ **Warning:** Two addons using the same `cacheKeyHeaderTag` can overwrite each other's cache entries. Always use unique prefixes.
 
