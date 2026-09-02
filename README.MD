@@ -2,13 +2,7 @@
 
 > *"The central brain between your distributed Minecraft infrastructure and persistent data layer."*
 
-[Java](https://www.java.com/) 
-[Redis](https://redis.io/)
-[MongoDB](https://www.mongodb.com/)
-[Security](#-security-layer-new)
-
 ---
-
 ## 📖 Table of Contents
 
 * [What is Nexus Core?](#-what-is-nexus-core)
