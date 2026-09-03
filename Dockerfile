@@ -1,16 +1,16 @@
-FROM maven:3.9-eclipse-temurin-17 AS build
+FROM maven:3.9-eclipse-temurin-21 AS build
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
-RUN git clone https://github.com/mustafabinguldev/nexus-cache-orchestrator.git . 
+RUN git clone https://github.com/mustafabinguldev/nexus-cache-orchestrator.git .
 
 RUN mvn clean package -DskipTests
 
-FROM eclipse-temurin:17-jre-jammy
+FROM eclipse-temurin:21-jre-jammy
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        xvfb x11vnc \
+        xvfb x11vnc util-linux fluxbox fonts-dejavu-core x11-utils xterm \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

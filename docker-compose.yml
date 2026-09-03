@@ -40,6 +40,8 @@ services:
       dockerfile: Dockerfile
     container_name: nexus-core
     restart: unless-stopped
+    tty: true
+    stdin_open: true
     depends_on:
       redis:
         condition: service_healthy
@@ -52,6 +54,7 @@ services:
       REDIS_HOST: redis
       MONGO_URI: mongodb://${MONGO_ROOT_USER:-nexus}:${MONGO_ROOT_PASSWORD:-nexus_pw}@mongo:27017
       SERVER_PORT: 8080
+      VNC_PASSWORD: "examplepassword"
 
 volumes:
   redis-data:

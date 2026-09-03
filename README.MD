@@ -142,6 +142,10 @@ Spigot Server              Redis                 Nexus Core              MongoDB
 | `LOAD_CACHE`     | Preloads a document into memory by ID             | `findOne()`                      | Warm          |
 
 ---
+## 🐳 Docker Installation
+Nexus Cache Orchestrator can be deployed quickly using Docker Compose with Redis, MongoDB, persistent volumes, health checks, and an interactive VNC-based initial setup.
+For complete installation instructions, environment configuration, VNC setup, management commands, and production security recommendations, see the **[Docker Installation Guide](docker-installation.md)**.
+
 
 ## 🔐 Security Layer (New)
 
