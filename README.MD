@@ -2,19 +2,13 @@
 
 > *"The central brain between your distributed Minecraft infrastructure and persistent data layer."*
 
-[Java](https://www.java.com/) ([image](https://img.shields.io/badge/Java-17+-blue?style=flat-square&logo=java))
-[Redis](https://redis.io/) ([image](https://img.shields.io/badge/Redis-Message%20Broker-red?style=flat-square&logo=redis))
-[MongoDB](https://www.mongodb.com/) ([image](https://img.shields.io/badge/MongoDB-Persistence-green?style=flat-square&logo=mongodb))
-[Security](#-security-layer-new) ([image](https://img.shields.io/badge/Security-HMAC%20%2B%20Anti--Replay-orange?style=flat-square))
-
 ---
-
 ## 📖 Table of Contents
 
 * [What is Nexus Core?](#-what-is-nexus-core)
 * [System Architecture](#️-system-architecture)
 * [Data Flow](#-data-flow)
-* [🔐 Security Layer (New)](#-security-layer-new)
+* [Security Layer (New)](#-security-layer-new)
 * [Core Components](#-core-components)
 * [Version History / Changelog](#-version-history--changelog)
 * [Getting Started](#-getting-started)
@@ -561,9 +555,9 @@ When the security layer is enabled, every packet must contain the `sig`, `timest
 
 | Addon              | `cacheKeyHeaderTag` | ID Field Value | Full Redis Key    |
 | ------------------ | ------------------- | -------------- | ----------------- |
-| `PlayerStatsAddon` | `stats`             | `Steve`        | `stats:Steve`     |
-| `GuildAddon`       | `guild`             | `Darkland`     | `guild:Darkland`  |
-| `EconomyAddon`     | `eco`               | `550e8400...`  | `eco:550e8400...` |
+| `PlayerStatsAddon` | `stats`             | `Steve`        | `stats_Steve`     |
+| `GuildAddon`       | `guild`             | `Darkland`     | `guild_Darkland`  |
+| `EconomyAddon`     | `eco`               | `550e8400...`  | `eco_550e8400...` |
 
 > ⚠️ **Warning:** Two addons using the same `cacheKeyHeaderTag` can overwrite each other's cache entries. Always use unique prefixes.
 
