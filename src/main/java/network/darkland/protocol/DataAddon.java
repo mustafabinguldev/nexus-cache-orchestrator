@@ -138,7 +138,7 @@ public abstract class DataAddon {
                             response.set("position", position);
                             app.getRedisManager().publish(
                                     RedisManager.CHANNEL + "_" + source,
-                                    response.toFullJson()
+                                    network.darkland.redis.MessageAuth.stamp(response.toFullJson())
                             );
                         })
         );
@@ -165,16 +165,13 @@ public abstract class DataAddon {
                             response.set("response", rankingMap);
                             app.getRedisManager().publish(
                                     RedisManager.CHANNEL + "_" + source,
-                                    response.toFullJson()
+                                    network.darkland.redis.MessageAuth.stamp(response.toFullJson())
                             );
                         })
                         .exceptionally(ex -> { ex.printStackTrace(); return null; })
         );
     }
 
-    // ────────────────────────────────────────────────────────────────────────
-    // handleIncrementData
-    // ────────────────────────────────────────────────────────────────────────
     public void handleIncrementData(String source, NexusJsonDataContainer json) {
         NexusApplication app = NexusApplication.getApplication();
         app.getRedisManager().processTask(() -> {
@@ -197,7 +194,6 @@ public abstract class DataAddon {
 
                 json.set(getIdFieldName(), keyValue);
 
-                // Per-key lock — aynı key için paralel increment'i engeller.
                 lockKey = keyValue.toString();
                 lock = keyLocks.computeIfAbsent(lockKey, k -> new Object());
 
@@ -261,8 +257,6 @@ public abstract class DataAddon {
                 getData(json).ifPresent(dataModel -> {
                     app.getDataContainer().removeModel(dataModel.getKey());
                     if (allRemove) {
-                        // Mongo'dan kalıcı silme — bloklayan bir işlem olduğu için
-                        // ayrı Mongo işçi havuzunda çalıştırılır.
                         app.getRedisManager().processMongoTask(() ->
                                 app.getMongoManager().removeValue(this, specificId).join()
                         );
@@ -311,7 +305,7 @@ public abstract class DataAddon {
 
                 app.getRedisManager().publish(
                         RedisManager.CHANNEL + "_" + source,
-                        MAPPER.writeValueAsString(rootNode)
+                        network.darkland.redis.MessageAuth.stamp(MAPPER.writeValueAsString(rootNode))
                 );
 
             } catch (Exception e) {
@@ -346,11 +340,8 @@ public abstract class DataAddon {
                     DataModel existing = dataModelOpt.get();
                     String    updated  = modelInitComp(rawInput);
 
-                    // setValueJson artık sadece local state + dirty flag günceller.
                     existing.setValueJson(updated);
 
-                    // Redis'e TEK gerçek yazım burada — setData zaten TTL'i yeniliyor,
-                    // ayrıca renewTTL çağırmaya gerek yok.
                     app.getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
                     pushMetrics(new NexusJsonDataContainer(updated));
                 }
@@ -441,7 +432,7 @@ public abstract class DataAddon {
             } catch (Exception e) {
                 try   { return MAPPER.readValue("{}", type); }
                 catch (Exception ex) {
-                    LOGGER.warning("[DataAddon/" + addonName() + "] convertToType: default üretilemedi -> " + type.getSimpleName());
+                    LOGGER.warning("[DataAddon/" + addonName() + "] convertToType: -> " + type.getSimpleName());
                     return null;
                 }
             }

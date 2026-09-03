@@ -50,7 +50,7 @@ public class RedisDataContainer {
             jsonDataContainer.set("time", System.currentTimeMillis() / 1000L);
 
             NexusApplication.getApplication().getRedisManager()
-                    .publish("darkland_nexus_live", jsonDataContainer.toFullJson());
+                    .publish("darkland_nexus_live", MessageAuth.stamp(jsonDataContainer.toFullJson()));
         });
     }
 
@@ -123,7 +123,7 @@ public class RedisDataContainer {
 
                 } catch (Exception e) {
                     LOGGER.log(Level.SEVERE,
-                            "[AutoFlush] Mongo yazımı başarısız, tekrar denenecek: " + key, e);
+                            "[AutoFlush] Mongo write failed, will retry.: " + key, e);
                 }
             }
         });
@@ -133,8 +133,6 @@ public class RedisDataContainer {
         if (keyToModel.isEmpty()) return;
 
         RedisManager rm = NexusApplication.getApplication().getRedisManager();
-
-        // Reconciliation da Mongo'ya çok sayıda okuma/yazma yapar — Mongo havuzunda çalışsın.
         rm.processMongoTask(() -> {
             List<String> keys  = new ArrayList<>(keyToModel.keySet());
             List<CompletableFuture<?>> batch = new ArrayList<>(RECONCILE_BATCH_SIZE);
@@ -165,12 +163,12 @@ public class RedisDataContainer {
                                 }
                             } catch (Exception e) {
                                 LOGGER.log(Level.WARNING,
-                                        "[Reconciliation] modelInitComp hatası: " + key, e);
+                                        "[Reconciliation] modelInitComp error: " + key, e);
                             }
                         })
                         .exceptionally(ex -> {
                             LOGGER.log(Level.WARNING,
-                                    "[Reconciliation] Mongo okuma hatası: " + key, ex);
+                                    "[Reconciliation] Mongo read error: " + key, ex);
                             return null;
                         });
 
@@ -190,7 +188,7 @@ public class RedisDataContainer {
         try {
             CompletableFuture.allOf(batch.toArray(new CompletableFuture[0])).get();
         } catch (Exception e) {
-            LOGGER.log(Level.WARNING, "[Reconciliation] Batch bekleme hatası", e);
+            LOGGER.log(Level.WARNING, "[Reconciliation] Batch waiting error", e);
         }
     }
 

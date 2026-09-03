@@ -14,6 +14,9 @@ import java.util.Base64;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -42,6 +45,22 @@ public class NexusReceiver extends JedisPubSub {
     private static final Map<String, Long> USED_NONCES =
             new ConcurrentHashMap<>();
 
+    private static final ScheduledExecutorService NONCE_CLEANUP_SCHEDULER =
+            Executors.newSingleThreadScheduledExecutor(r -> {
+                Thread t = new Thread(r, "Nexus-Nonce-Cleanup");
+                t.setDaemon(true);
+                return t;
+            });
+
+    static {
+        NONCE_CLEANUP_SCHEDULER.scheduleAtFixedRate(
+                () -> cleanupExpiredNonces(System.currentTimeMillis()),
+                TIMESTAMP_WINDOW_MILLIS,
+                TIMESTAMP_WINDOW_MILLIS,
+                TimeUnit.MILLISECONDS
+        );
+    }
+
     private final RedisManager redisManager;
 
     public NexusReceiver(RedisManager redisManager) {
@@ -53,7 +72,7 @@ public class NexusReceiver extends JedisPubSub {
         redisManager.enqueueMessage(message);
     }
 
-    private void cleanupExpiredNonces(long now) {
+    private static void cleanupExpiredNonces(long now) {
 
         long expirationTime =
                 now - TIMESTAMP_WINDOW_MILLIS;
@@ -66,7 +85,7 @@ public class NexusReceiver extends JedisPubSub {
     private boolean isNonceValid(NexusJsonDataContainer container) {
 
         if (!container.containsKey(FIELD_NONCE)) {
-            LOGGER.warning("Nonce alanı eksik, mesaj reddedildi.");
+            LOGGER.warning("Nonce field missing, message rejected..");
             return false;
         }
 
@@ -75,20 +94,18 @@ public class NexusReceiver extends JedisPubSub {
                     container.get(FIELD_NONCE, String.class);
 
             if (nonce == null || nonce.isBlank()) {
-                LOGGER.warning("Nonce boş, mesaj reddedildi.");
+                LOGGER.warning("Nonce is empty; message rejected.");
                 return false;
             }
 
             long now = System.currentTimeMillis();
-
-            cleanupExpiredNonces(now);
 
             Long previous =
                     USED_NONCES.putIfAbsent(nonce, now);
 
             if (previous != null) {
                 LOGGER.warning(
-                        "Tekrar kullanılan nonce tespit edildi: "
+                        "Reused nonce detected: "
                                 + nonce
                 );
 
@@ -99,7 +116,7 @@ public class NexusReceiver extends JedisPubSub {
 
         } catch (Exception e) {
             LOGGER.warning(
-                    "Nonce kontrolünde hata, mesaj reddedildi: "
+                    "Error in nonce check, message rejected: "
                             + e.getMessage()
             );
 
@@ -110,7 +127,7 @@ public class NexusReceiver extends JedisPubSub {
     private boolean isTimestampValid(NexusJsonDataContainer container) {
 
         if (!container.containsKey(FIELD_TIMESTAMP)) {
-            LOGGER.warning("Timestamp alanı eksik, mesaj reddedildi.");
+            LOGGER.warning("Timestamp field missing, message rejected..");
             return false;
         }
 
@@ -124,7 +141,7 @@ public class NexusReceiver extends JedisPubSub {
 
             if (difference > TIMESTAMP_WINDOW_MILLIS) {
                 LOGGER.warning(
-                        "Mesaj timestamp sınırının dışında. Fark: "
+                        "The message is outside the timestamp limit. Difference: "
                                 + difference
                                 + " ms"
                 );
@@ -136,7 +153,7 @@ public class NexusReceiver extends JedisPubSub {
 
         } catch (Exception e) {
             LOGGER.warning(
-                    "Timestamp okunamadı, mesaj reddedildi."
+                    "Timestamp could not be read, message rejected.."
             );
 
             return false;
@@ -147,14 +164,14 @@ public class NexusReceiver extends JedisPubSub {
         if (SHARED_SECRET.isBlank()) {
             if (!warnedOnce) {
                 warnedOnce = true;
-                LOGGER.warning("NEXUS_SIGNING_KEY ayarlanmamış — mesaj imza doğrulaması DEVRE DIŞI. "
-                        + "Bu sadece geçiş dönemi için kabul edilebilir, üretimde mutlaka ayarlayın.");
+                LOGGER.warning("NEXUS_SIGNING_KEY not set — message signature verification DISABLED. "
+                        + "This is acceptable only for the transition period; be sure to adjust it in production..");
             }
             return true;
         }
 
         if (!container.containsKey(FIELD_SIG)) {
-            LOGGER.warning("İmza alanı ('sig') eksik, mesaj reddedildi.");
+            LOGGER.warning("Signature field ('sig') missing; message rejected..");
             return false;
         }
 
@@ -168,12 +185,12 @@ public class NexusReceiver extends JedisPubSub {
             boolean valid = expectedSig.equals(providedSig);
 
             if (!valid) {
-                LOGGER.warning("İmza doğrulaması başarısız — mesaj reddedildi. "
-                        + "Gönderen taraf yanlış/eski anahtar kullanıyor olabilir.");
+                LOGGER.warning("Signature verification failed — message rejected. "
+                        + "The sender might be using an incorrect or outdated key.");
             }
             return valid;
         } catch (JsonProcessingException e) {
-            LOGGER.warning("İmza doğrulaması sırasında JSON hatası, mesaj reddedildi: " + e.getMessage());
+            LOGGER.warning("JSON error during signature verification; message rejected.: " + e.getMessage());
             return false;
         }
     }
@@ -185,7 +202,7 @@ public class NexusReceiver extends JedisPubSub {
             byte[] raw = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
             return Base64.getEncoder().encodeToString(raw);
         } catch (Exception e) {
-            throw new RuntimeException("HMAC hesaplanamadı", e);
+            throw new RuntimeException("HMAC could not be calculated.", e);
         }
     }
 
