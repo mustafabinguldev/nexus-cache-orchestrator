@@ -1,0 +1,58 @@
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: nexus-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:7
+    container_name: nexus-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-nexus}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:-nexus_pw}
+      MONGO_INITDB_DATABASE: nexus_core_db
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nexus-core:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: nexus-core
+    restart: unless-stopped
+    depends_on:
+      redis:
+        condition: service_healthy
+      mongo:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+      - "5900:5900"
+    environment:
+      REDIS_HOST: redis
+      MONGO_URI: mongodb://${MONGO_ROOT_USER:-nexus}:${MONGO_ROOT_PASSWORD:-nexus_pw}@mongo:27017
+      SERVER_PORT: 8080
+
+volumes:
+  redis-data:
+  mongo-data:
