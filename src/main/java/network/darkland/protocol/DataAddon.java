@@ -7,14 +7,14 @@ import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
-import network.darkland.Influxdb.InfluxDBManager;
 import network.darkland.Influxdb.annotations.NexusMetric;
 import network.darkland.Influxdb.annotations.NexusMetricConfig;
 import network.darkland.NexusApplication;
 import network.darkland.model.DataModel;
 import network.darkland.protocol.backup.annotations.DbDataModels;
-import network.darkland.redis.RedisDataContainer;
 import network.darkland.redis.RedisManager;
+import network.darkland.redis.security.MessageValidationChain;
+import network.darkland.redis.security.MessageValidator;
 import network.darkland.util.JsonUtils;
 import network.darkland.util.NexusJsonBuilder;
 
@@ -22,6 +22,7 @@ import java.lang.reflect.Field;
 import java.time.Instant;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -47,6 +48,10 @@ public abstract class DataAddon {
 
     private final ConcurrentHashMap<String, Object> keyLocks = new ConcurrentHashMap<>();
 
+    // ── Addon'a özel ek doğrulama zinciri (lazy, tek sefer inşa edilir) ─────
+    private volatile MessageValidationChain additionalValidationChain = null;
+    private final Object validationChainLock = new Object();
+
     // ── Abstract API ────────────────────────────────────────────────────────
     public abstract boolean handleRequest(String source, RequestType type, NexusJsonDataContainer json);
     public abstract int     addonId();
@@ -55,6 +60,22 @@ public abstract class DataAddon {
     public abstract String  getDatabase();
     public abstract String  getCollection();
     public abstract int     getCacheTTL();
+
+    protected List<MessageValidator> additionalValidators() {
+        return List.of();
+    }
+
+    public final MessageValidationChain getAdditionalValidationChain() {
+        MessageValidationChain chain = additionalValidationChain;
+        if (chain != null) return chain;
+
+        synchronized (validationChainLock) {
+            if (additionalValidationChain == null) {
+                additionalValidationChain = new MessageValidationChain(additionalValidators());
+            }
+            return additionalValidationChain;
+        }
+    }
 
     private void releaseKeyLock(String keyValue, Object lock) {
         keyLocks.remove(keyValue, lock);
@@ -172,6 +193,9 @@ public abstract class DataAddon {
         );
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // handleIncrementData
+    // ────────────────────────────────────────────────────────────────────────
     public void handleIncrementData(String source, NexusJsonDataContainer json) {
         NexusApplication app = NexusApplication.getApplication();
         app.getRedisManager().processTask(() -> {
@@ -194,6 +218,7 @@ public abstract class DataAddon {
 
                 json.set(getIdFieldName(), keyValue);
 
+                // Per-key lock — aynı key için paralel increment'i engeller.
                 lockKey = keyValue.toString();
                 lock = keyLocks.computeIfAbsent(lockKey, k -> new Object());
 
@@ -257,6 +282,8 @@ public abstract class DataAddon {
                 getData(json).ifPresent(dataModel -> {
                     app.getDataContainer().removeModel(dataModel.getKey());
                     if (allRemove) {
+                        // Mongo'dan kalıcı silme — bloklayan bir işlem olduğu için
+                        // ayrı Mongo işçi havuzunda çalıştırılır.
                         app.getRedisManager().processMongoTask(() ->
                                 app.getMongoManager().removeValue(this, specificId).join()
                         );
@@ -340,8 +367,11 @@ public abstract class DataAddon {
                     DataModel existing = dataModelOpt.get();
                     String    updated  = modelInitComp(rawInput);
 
+                    // setValueJson artık sadece local state + dirty flag günceller.
                     existing.setValueJson(updated);
 
+                    // Redis'e TEK gerçek yazım burada — setData zaten TTL'i yeniliyor,
+                    // ayrıca renewTTL çağırmaya gerek yok.
                     app.getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
                     pushMetrics(new NexusJsonDataContainer(updated));
                 }
@@ -432,7 +462,7 @@ public abstract class DataAddon {
             } catch (Exception e) {
                 try   { return MAPPER.readValue("{}", type); }
                 catch (Exception ex) {
-                    LOGGER.warning("[DataAddon/" + addonName() + "] convertToType: -> " + type.getSimpleName());
+                    LOGGER.warning("[DataAddon/" + addonName() + "] convertToType: default üretilemedi -> " + type.getSimpleName());
                     return null;
                 }
             }
@@ -494,17 +524,12 @@ public abstract class DataAddon {
             NexusApplication app    = NexusApplication.getApplication();
             RedisManager     redis  = app.getRedisManager();
 
-            // L1 — in-process cache
             Optional<DataModel> l1 = app.getDataContainer().getDataModelFromKey(keyTag);
             if (l1.isPresent()) {
                 pushMetrics(new NexusJsonDataContainer(l1.get().getValueJson()));
                 return l1;
             }
 
-            // L2 — Redis cache
-            // NOT: exists() + getData() arasında key expire olabilir (TOCTOU).
-            // Bu yüzden ayrı bir exists() kontrolü yerine doğrudan getData()'nın
-            // Optional dönüşüne güveniyoruz — race condition'ı ortadan kaldırır.
             Optional<String> redisOpt = redis.getData(keyTag);
             if (redisOpt.isPresent()) {
                 String redisJson = redisOpt.get();

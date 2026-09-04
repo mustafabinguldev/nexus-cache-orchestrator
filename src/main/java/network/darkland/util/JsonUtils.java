@@ -1,10 +1,12 @@
 package network.darkland.util;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.MapperFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 
 public class JsonUtils {
-    private static final ObjectMapper mapper = new ObjectMapper();
+    private static final ObjectMapper mapper = new ObjectMapper()
+            .configure(MapperFeature.SORT_PROPERTIES_ALPHABETICALLY, true);
 
     public static ObjectMapper getMapper() {
         return mapper;

@@ -4,19 +4,15 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import network.darkland.NexusApplication;
 import network.darkland.protocol.DataAddon;
 import network.darkland.protocol.NexusJsonDataContainer;
+import network.darkland.redis.security.MessageValidationChain;
+import network.darkland.redis.security.NonceValidator;
+import network.darkland.redis.security.SignatureValidator;
+import network.darkland.redis.security.TimestampValidator;
 import network.darkland.util.JsonUtils;
 import redis.clients.jedis.JedisPubSub;
 
-import javax.crypto.Mac;
-import javax.crypto.spec.SecretKeySpec;
-import java.nio.charset.StandardCharsets;
-import java.util.Base64;
-import java.util.Map;
+import java.util.List;
 import java.util.Optional;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.Executors;
-import java.util.concurrent.ScheduledExecutorService;
-import java.util.concurrent.TimeUnit;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
@@ -29,37 +25,14 @@ public class NexusReceiver extends JedisPubSub {
     private static final String FIELD_KEY      = "key";
     private static final String FIELD_SOURCE   = "source";
     private static final String FIELD_DATA     = "data";
-    private static final String FIELD_SIG      = "sig";
-    private static final String FIELD_NONCE = "nonce";
-    private static final String FIELD_TIMESTAMP = "timestamp";
 
-
-    private static final String SHARED_SECRET =
-            System.getenv().getOrDefault("NEXUS_SIGNING_KEY", "");
-
-    private static final long TIMESTAMP_WINDOW_MILLIS = 5 * 60 * 1000L;
-
-
-    private static volatile boolean warnedOnce = false;
-
-    private static final Map<String, Long> USED_NONCES =
-            new ConcurrentHashMap<>();
-
-    private static final ScheduledExecutorService NONCE_CLEANUP_SCHEDULER =
-            Executors.newSingleThreadScheduledExecutor(r -> {
-                Thread t = new Thread(r, "Nexus-Nonce-Cleanup");
-                t.setDaemon(true);
-                return t;
-            });
-
-    static {
-        NONCE_CLEANUP_SCHEDULER.scheduleAtFixedRate(
-                () -> cleanupExpiredNonces(System.currentTimeMillis()),
-                TIMESTAMP_WINDOW_MILLIS,
-                TIMESTAMP_WINDOW_MILLIS,
-                TimeUnit.MILLISECONDS
-        );
-    }
+    private static final MessageValidationChain VALIDATION_CHAIN = new MessageValidationChain(
+            List.of(
+                    new SignatureValidator(),
+                    new TimestampValidator(),
+                    new NonceValidator()
+            )
+    );
 
     private final RedisManager redisManager;
 
@@ -72,153 +45,11 @@ public class NexusReceiver extends JedisPubSub {
         redisManager.enqueueMessage(message);
     }
 
-    private static void cleanupExpiredNonces(long now) {
-
-        long expirationTime =
-                now - TIMESTAMP_WINDOW_MILLIS;
-
-        USED_NONCES.entrySet().removeIf(
-                entry -> entry.getValue() < expirationTime
-        );
-    }
-
-    private boolean isNonceValid(NexusJsonDataContainer container) {
-
-        if (!container.containsKey(FIELD_NONCE)) {
-            LOGGER.warning("Nonce field missing, message rejected..");
-            return false;
-        }
-
-        try {
-            String nonce =
-                    container.get(FIELD_NONCE, String.class);
-
-            if (nonce == null || nonce.isBlank()) {
-                LOGGER.warning("Nonce is empty; message rejected.");
-                return false;
-            }
-
-            long now = System.currentTimeMillis();
-
-            Long previous =
-                    USED_NONCES.putIfAbsent(nonce, now);
-
-            if (previous != null) {
-                LOGGER.warning(
-                        "Reused nonce detected: "
-                                + nonce
-                );
-
-                return false;
-            }
-
-            return true;
-
-        } catch (Exception e) {
-            LOGGER.warning(
-                    "Error in nonce check, message rejected: "
-                            + e.getMessage()
-            );
-
-            return false;
-        }
-    }
-
-    private boolean isTimestampValid(NexusJsonDataContainer container) {
-
-        if (!container.containsKey(FIELD_TIMESTAMP)) {
-            LOGGER.warning("Timestamp field missing, message rejected..");
-            return false;
-        }
-
-        try {
-            long timestamp =
-                    container.get(FIELD_TIMESTAMP, Long.class);
-
-            long now = System.currentTimeMillis();
-
-            long difference = Math.abs(now - timestamp);
-
-            if (difference > TIMESTAMP_WINDOW_MILLIS) {
-                LOGGER.warning(
-                        "The message is outside the timestamp limit. Difference: "
-                                + difference
-                                + " ms"
-                );
-
-                return false;
-            }
-
-            return true;
-
-        } catch (Exception e) {
-            LOGGER.warning(
-                    "Timestamp could not be read, message rejected.."
-            );
-
-            return false;
-        }
-    }
-
-    private boolean isSignatureValid(NexusJsonDataContainer container) {
-        if (SHARED_SECRET.isBlank()) {
-            if (!warnedOnce) {
-                warnedOnce = true;
-                LOGGER.warning("NEXUS_SIGNING_KEY not set — message signature verification DISABLED. "
-                        + "This is acceptable only for the transition period; be sure to adjust it in production..");
-            }
-            return true;
-        }
-
-        if (!container.containsKey(FIELD_SIG)) {
-            LOGGER.warning("Signature field ('sig') missing; message rejected..");
-            return false;
-        }
-
-        try {
-            String providedSig = container.get(FIELD_SIG, String.class);
-
-            NexusJsonDataContainer withoutSig = new NexusJsonDataContainer(container.toFullJson());
-            withoutSig.remove(FIELD_SIG);
-
-            String expectedSig = hmacSha256(withoutSig.toFullJson(), SHARED_SECRET);
-            boolean valid = expectedSig.equals(providedSig);
-
-            if (!valid) {
-                LOGGER.warning("Signature verification failed — message rejected. "
-                        + "The sender might be using an incorrect or outdated key.");
-            }
-            return valid;
-        } catch (JsonProcessingException e) {
-            LOGGER.warning("JSON error during signature verification; message rejected.: " + e.getMessage());
-            return false;
-        }
-    }
-
-    private static String hmacSha256(String data, String key) {
-        try {
-            Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(key.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
-            byte[] raw = mac.doFinal(data.getBytes(StandardCharsets.UTF_8));
-            return Base64.getEncoder().encodeToString(raw);
-        } catch (Exception e) {
-            throw new RuntimeException("HMAC could not be calculated.", e);
-        }
-    }
-
     public void handleSyncMessage(String message) {
         try {
             NexusJsonDataContainer dataContainer = new NexusJsonDataContainer(message);
 
-            if (!isSignatureValid(dataContainer)) {
-                return;
-            }
-
-            if (!isTimestampValid(dataContainer)) {
-                return;
-            }
-
-            if (!isNonceValid(dataContainer)) {
+            if (!VALIDATION_CHAIN.runAll(dataContainer)) {
                 return;
             }
 
@@ -290,6 +121,10 @@ public class NexusReceiver extends JedisPubSub {
 
             DataAddon addon = addonOpt.get();
             NexusJsonDataContainer requestData = new NexusJsonDataContainer(jsonData);
+
+            if (!addon.getAdditionalValidationChain().runAll(requestData)) {
+                return;
+            }
 
             if (!addon.handleRequest(source, type, requestData)) {
                 return;

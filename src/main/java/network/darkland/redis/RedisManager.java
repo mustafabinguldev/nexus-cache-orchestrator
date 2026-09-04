@@ -53,7 +53,6 @@ public class RedisManager {
         System.out.println("Nexus: System initialized with high-performance dual-queue logic.");
     }
 
-    /** Geriye dönük uyumluluk için: varsayılan port 6379, auth yok. */
     public RedisManager(NexusApplication application, String redisHost) {
         this(application, redisHost, 6379, null, null);
     }
@@ -123,7 +122,7 @@ public class RedisManager {
                     poolConfig,
                     this.redisHost,
                     this.redisPort,
-                    2000,                 // connection timeout (ms)
+                    2000,
                     hasUser ? redisUser : null,
                     redisPass
             );
@@ -131,8 +130,8 @@ public class RedisManager {
                     + ":" + this.redisPort + " (auth ENABLED)");
         } else {
             this.pool = new JedisPool(poolConfig, this.redisHost, this.redisPort);
-            System.err.println("Nexus: UYARI — Redis parolasız bağlanıyor! "
-                    + "Üretim ortamında 'redisPass' ayarını mutlaka yapılandırın.");
+            System.err.println("Nexus: WARNING — Connecting to Redis without a password! "
+                    + "Make sure to configure the 'redisPass' setting in the production environment.");
         }
 
         enableKeyspaceNotifications();
@@ -140,8 +139,6 @@ public class RedisManager {
 
     public void enableKeyspaceNotifications() {
         try (Jedis jedis = pool.getResource()) {
-            // "Ex" sadece TTL expire olaylarını yakalar. maxmemory-policy ile eviction
-            // da izlemek istiyorsan "Egx" kullanmayı değerlendir.
             jedis.configSet("notify-keyspace-events", "Ex");
             System.out.println("Nexus: Keyspace Notifications (Expired) enabled via Jedis.");
         } catch (Exception e) {

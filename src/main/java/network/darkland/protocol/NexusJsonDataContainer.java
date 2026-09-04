@@ -5,12 +5,12 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import network.darkland.util.JsonUtils;
 
-import java.util.HashMap;
 import java.util.Map;
+import java.util.TreeMap;
 
 public class NexusJsonDataContainer {
 
-    private final Map<String, Object> dataMap = new HashMap<>();
+    private final Map<String, Object> dataMap = new TreeMap<>();
     private final ObjectMapper mapper = JsonUtils.getMapper();
 
     public NexusJsonDataContainer() {
