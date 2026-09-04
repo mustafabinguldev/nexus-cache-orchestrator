@@ -2,7 +2,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>network.darkland</groupId>
     <artifactId>nexus-cache-orchestrato</artifactId>
-    <version>1.5.5</version>
+    <version>1.6.0</version>
 
     <properties>
             <maven.compiler.source>21</maven.compiler.source>
@@ -85,7 +85,6 @@
             <groupId>org.mongodb</groupId>
             <artifactId>mongodb-driver-sync</artifactId>
         </dependency>
-
         <dependency>
             <groupId>io.dropwizard.metrics</groupId>
             <artifactId>metrics-core</artifactId>
