@@ -5,12 +5,13 @@
     <version>1.5.5</version>
 
     <properties>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-        <spring-boot.version>3.3.4</spring-boot.version>
-        <!-- Spring Boot BOM'unun core/bson sürümlerini 5.0.1'de tutmasını engeller -->
-        <mongodb.version>5.6.1</mongodb.version>
+            <maven.compiler.source>21</maven.compiler.source>
+            <maven.compiler.target>21</maven.compiler.target>
+            <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+            <spring-boot.version>3.3.9</spring-boot.version>
+            <jackson.version>2.18.2</jackson.version>
+            <mongodb.version>5.6.1</mongodb.version>
+
     </properties>
 
     <distributionManagement>

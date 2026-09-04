@@ -282,8 +282,6 @@ public abstract class DataAddon {
                 getData(json).ifPresent(dataModel -> {
                     app.getDataContainer().removeModel(dataModel.getKey());
                     if (allRemove) {
-                        // Mongo'dan kalıcı silme — bloklayan bir işlem olduğu için
-                        // ayrı Mongo işçi havuzunda çalıştırılır.
                         app.getRedisManager().processMongoTask(() ->
                                 app.getMongoManager().removeValue(this, specificId).join()
                         );
