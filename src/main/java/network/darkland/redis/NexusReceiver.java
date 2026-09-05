@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import network.darkland.NexusApplication;
 import network.darkland.protocol.DataAddon;
 import network.darkland.protocol.NexusJsonDataContainer;
+import network.darkland.protocol.RequestType;
 import network.darkland.redis.security.MessageValidationChain;
 import network.darkland.redis.security.NonceValidator;
 import network.darkland.redis.security.SignatureValidator;
@@ -59,15 +60,15 @@ public class NexusReceiver extends JedisPubSub {
             }
 
             String typeStr = dataContainer.get(FIELD_TYPE, String.class);
-            DataAddon.RequestType type;
-            try {
-                type = DataAddon.RequestType.valueOf(typeStr);
-            } catch (IllegalArgumentException e) {
+
+            Optional<RequestType> typeOpt = RequestType.lookup(typeStr);
+            if (typeOpt.isEmpty()) {
                 LOGGER.warning("Unknown RequestType received: " + typeStr);
                 return;
             }
+            RequestType type = typeOpt.get();
 
-            if (type == DataAddon.RequestType.LOAD_CACHE) {
+            if (type == RequestType.LOAD_CACHE) {
                 handleLoadCache(dataContainer);
                 return;
             }
@@ -77,7 +78,7 @@ public class NexusReceiver extends JedisPubSub {
                 return;
             }
 
-            if (type == DataAddon.RequestType.BROADCAST) {
+            if (type == RequestType.BROADCAST) {
                 handleBroadcast(dataContainer);
                 return;
             }
@@ -130,15 +131,7 @@ public class NexusReceiver extends JedisPubSub {
                 return;
             }
 
-            switch (type) {
-                case GET_DATA       -> addon.handleGet(source, requestData);
-                case SET_DATA       -> addon.handleSet(source, requestData);
-                case REMOVE_DATA    -> addon.handleRemove(source, requestData);
-                case INCREMENT_DATA -> addon.handleIncrementData(source, requestData);
-                case RANKING        -> addon.handleRankingData(source, requestData);
-                case RANK_FINDER    -> addon.handleRankFinderData(source, requestData);
-                default             -> LOGGER.warning("Unhandled RequestType: " + type);
-            }
+            addon.dispatch(source, type, requestData);
 
         } catch (JsonProcessingException e) {
             LOGGER.log(Level.SEVERE, "JSON processing error: " + e.getMessage(), e);

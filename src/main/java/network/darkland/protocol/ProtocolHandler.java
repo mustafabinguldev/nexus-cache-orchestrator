@@ -2,42 +2,39 @@ package network.darkland.protocol;
 
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
-public class ProtocolHandler {
+public final class ProtocolHandler {
 
-    private final ConcurrentHashMap<Integer, DataAddon> addons;
-
-    public ProtocolHandler() {
-        addons = new ConcurrentHashMap<>();
-    }
-
-    public Optional<DataAddon> getAddonById(int id) {
-        DataAddon addon = addons.get(id);
-        if (addon != null) {
-            return Optional.of(addon);
-        }
-        return Optional.empty();
-    }
+    private final Map<Integer, DataAddon> registry = new ConcurrentHashMap<>();
 
     public void registerAddon(DataAddon addon) {
-        if (addons.keySet().stream().anyMatch(integer -> integer == addon.addonId())) {
-            return;
+        DataAddon existing = registry.putIfAbsent(addon.addonId(), addon);
+        if (existing != null) {
+            throw new IllegalStateException(
+                    "Duplicate addonId: " + addon.addonId()
+                            + " (" + existing.addonName() + " ile " + addon.addonName() + " çakışıyor)"
+            );
         }
+    }
 
-        System.out.println(addon.getClass().getName() + " Protocol Id: " + addon.addonId());
+    public Optional<DataAddon> getAddonById(int protocolId) {
+        return Optional.ofNullable(registry.get(protocolId));
+    }
 
-        addons.put(addon.addonId(), addon);
+    public int getAddonSize() {
+        return registry.size();
     }
 
     public List<String> getAddondsNames() {
-        return addons.values().stream()
+        return registry.values().stream()
                 .map(addon -> addon.getClass().getSimpleName())
                 .toList();
     }
 
     public Collection<DataAddon> getAllAddons() {
-        return addons.values();
+        return registry.values();
     }
 }
