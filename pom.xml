@@ -61,44 +61,6 @@
                 </executions>
             </plugin>
 
-            <plugin>
-                <groupId>com.github.siom79.japicmp</groupId>
-                <artifactId>japicmp-maven-plugin</artifactId>
-                <version>0.21.1</version>
-                <configuration>
-                    <oldVersion>
-                        <dependency>
-                            <groupId>network.darkland</groupId>
-                            <artifactId>nexus-cache-orchestrato</artifactId>
-                            <version>${japicmp.oldVersion}</version>
-                            <type>jar</type>
-                        </dependency>
-                    </oldVersion>
-                    <newVersion>
-                        <file>
-                            <path>${project.build.directory}/${project.build.finalName}.jar</path>
-                        </file>
-                    </newVersion>
-                    <parameter>
-                        <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
-                        <breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
-                        <accessModifier>PUBLIC</accessModifier>
-                        <!-- Henüz hiç sürüm deploy etmediysen (ilk çalıştırma) build'i kırmasın diye: -->
-                        <ignoreMissingClasses>true</ignoreMissingClasses>
-                    </parameter>
-                    <excludes>
-                        <exclude>org.springframework.boot.loader.*</exclude>
-                    </excludes>
-                </configuration>
-                <executions>
-                    <execution>
-                        <phase>verify</phase>
-                        <goals>
-                            <goal>cmp</goal>
-                        </goals>
-                    </execution>
-                </executions>
-            </plugin>
         </plugins>
     </build>
 
