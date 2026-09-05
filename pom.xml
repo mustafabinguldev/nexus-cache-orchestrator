@@ -2,7 +2,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>network.darkland</groupId>
     <artifactId>nexus-cache-orchestrato</artifactId>
-    <version>1.6.1</version>
+    <version>1.6.2</version>
 
     <properties>
             <maven.compiler.source>21</maven.compiler.source>
@@ -48,6 +48,7 @@
                 <version>${spring-boot.version}</version>
                 <configuration>
                     <mainClass>network.darkland.web.WebApplication</mainClass>
+                    <classifier>boot</classifier>
                 </configuration>
                 <executions>
                     <execution>
