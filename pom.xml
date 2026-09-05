@@ -2,14 +2,15 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>network.darkland</groupId>
     <artifactId>nexus-cache-orchestrato</artifactId>
-    <version>1.6.2</version>
+    <version>1.6.3</version>
 
     <properties>
-            <maven.compiler.source>21</maven.compiler.source>
-            <maven.compiler.target>21</maven.compiler.target>
-            <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-            <spring-boot.version>4.1.1</spring-boot.version>
-           <mongodb.version>5.6.1</mongodb.version>
+        <maven.compiler.source>21</maven.compiler.source>
+        <maven.compiler.target>21</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <spring-boot.version>4.1.1</spring-boot.version>
+        <mongodb.version>5.6.1</mongodb.version>
+        <japicmp.oldVersion>1.6.1</japicmp.oldVersion>
     </properties>
 
     <distributionManagement>
@@ -42,6 +43,7 @@
                     <target>21</target>
                 </configuration>
             </plugin>
+
             <plugin>
                 <groupId>org.springframework.boot</groupId>
                 <artifactId>spring-boot-maven-plugin</artifactId>
@@ -54,6 +56,45 @@
                     <execution>
                         <goals>
                             <goal>repackage</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>com.github.siom79.japicmp</groupId>
+                <artifactId>japicmp-maven-plugin</artifactId>
+                <version>0.21.1</version>
+                <configuration>
+                    <oldVersion>
+                        <dependency>
+                            <groupId>network.darkland</groupId>
+                            <artifactId>nexus-cache-orchestrato</artifactId>
+                            <version>${japicmp.oldVersion}</version>
+                            <type>jar</type>
+                        </dependency>
+                    </oldVersion>
+                    <newVersion>
+                        <file>
+                            <path>${project.build.directory}/${project.build.finalName}.jar</path>
+                        </file>
+                    </newVersion>
+                    <parameter>
+                        <breakBuildOnBinaryIncompatibleModifications>true</breakBuildOnBinaryIncompatibleModifications>
+                        <breakBuildOnSourceIncompatibleModifications>true</breakBuildOnSourceIncompatibleModifications>
+                        <accessModifier>PUBLIC</accessModifier>
+                        <!-- Henüz hiç sürüm deploy etmediysen (ilk çalıştırma) build'i kırmasın diye: -->
+                        <ignoreMissingClasses>true</ignoreMissingClasses>
+                    </parameter>
+                    <excludes>
+                        <exclude>org.springframework.boot.loader.*</exclude>
+                    </excludes>
+                </configuration>
+                <executions>
+                    <execution>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>cmp</goal>
                         </goals>
                     </execution>
                 </executions>

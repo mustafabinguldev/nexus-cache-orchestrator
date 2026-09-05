@@ -69,7 +69,7 @@ public abstract class DataAddon {
 
     protected final void registerHandler(RequestType type, RequestHandler handler) {
         if (type == null || handler == null) {
-            throw new IllegalArgumentException("type ve handler null olamaz");
+            throw new IllegalArgumentException("type and handler cannot be null");
         }
         handlers.put(type, handler);
     }
@@ -77,13 +77,13 @@ public abstract class DataAddon {
     public final void dispatch(String source, RequestType type, NexusJsonDataContainer json) {
         RequestHandler handler = handlers.get(type);
         if (handler == null) {
-            LOGGER.warning("[DataAddon/" + addonName() + "] Kayıtlı handler bulunamadı, type=" + type);
+            LOGGER.warning("[DataAddon/" + addonName() + "] No registered handler found, type=" + type);
             return;
         }
         try {
             handler.handle(this, source, json);
         } catch (Exception e) {
-            LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] handler hata verdi, type=" + type, e);
+            LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] The handler threw an error; type=" + type, e);
         }
     }
 
@@ -313,7 +313,7 @@ public abstract class DataAddon {
                 String redisJson = redisOpt.get();
 
                 if (!redisJson.trim().startsWith("{")) {
-                    LOGGER.warning("[DataAddon/" + addonName() + "] Redis'te bozuk veri tespit edildi, siliniyor. key=" + keyTag);
+                    LOGGER.warning("[DataAddon/" + addonName() + "] Corrupt data detected in Redis; deleting key.=" + keyTag);
                     redis.deleteData(keyTag);
                 } else {
                     DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),

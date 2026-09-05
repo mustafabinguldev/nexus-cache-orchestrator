@@ -21,6 +21,8 @@ import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class SetupWizard {
 
@@ -210,11 +212,13 @@ public class SetupWizard {
         }
     }
 
+
     private void testMongo(String uri) {
         System.out.print(msg("mongo.testing"));
         MongoManager tempManager = null;
+        ExecutorService tempExecutor = Executors.newVirtualThreadPerTaskExecutor();
         try {
-            tempManager = new MongoManager(uri);
+            tempManager = new MongoManager(uri, tempExecutor);
             if (tempManager.verifyConnection()) {
                 System.out.println(msg("test.success"));
             } else {
@@ -228,9 +232,9 @@ public class SetupWizard {
             if (tempManager != null) {
                 tempManager.close();
             }
+            tempExecutor.shutdown();
         }
     }
-
     private void warnAndContinue() {
         boolean proceed = askYesNo(msg("test.warn_continue"), true);
         if (!proceed) {
@@ -238,10 +242,6 @@ public class SetupWizard {
             System.exit(1);
         }
     }
-
-    // ────────────────────────────────────────────────────────────────────────
-    // Girdi yardımcıları
-    // ────────────────────────────────────────────────────────────────────────
 
     private String ask(String label, String defaultValue) {
         String suffix = defaultValue.isEmpty() ? "" : " [" + defaultValue + "]";

@@ -18,14 +18,9 @@ public class RedisManager {
 
     private final BlockingQueue<String> messageQueue = new LinkedBlockingQueue<>(50000);
 
-    private final BlockingQueue<Runnable> internalTaskQueue = new LinkedBlockingQueue<>(50000);
+    private final ExecutorService mongoExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
-    private final ExecutorService mongoExecutor =
-            Executors.newFixedThreadPool(8, r -> {
-                Thread t = new Thread(r, "Nexus-Mongo-Worker");
-                t.setDaemon(true);
-                return t;
-            });
+    private final ExecutorService outboundExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
     private final ScheduledExecutorService scheduler = Executors.newScheduledThreadPool(
             Runtime.getRuntime().availableProcessors() * 2
@@ -47,10 +42,8 @@ public class RedisManager {
         this.connect();
 
         this.startInboundWorkers();
-        this.startOutboundWorkers();
-
         this.startListening();
-        System.out.println("Nexus: System initialized with high-performance dual-queue logic.");
+        System.out.println("Nexus: System initialized with virtual-thread task execution.");
     }
 
     public RedisManager(NexusApplication application, String redisHost) {
@@ -75,37 +68,20 @@ public class RedisManager {
         }
     }
 
-    private void startOutboundWorkers() {
-        int workers = Math.max(2, Runtime.getRuntime().availableProcessors());
-        for (int i = 0; i < workers; i++) {
-            new Thread(() -> {
-                while (!Thread.currentThread().isInterrupted()) {
-                    try {
-                        Runnable task = internalTaskQueue.take();
-                        task.run();
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        break;
-                    } catch (Exception e) {
-                        e.printStackTrace();
-                    }
-                }
-            }, "Nexus-Outbound-Worker-" + i).start();
-        }
-    }
-
     public void enqueueMessage(String message) {
         messageQueue.offer(message);
     }
 
     public void processTask(Runnable task) {
-        if (!internalTaskQueue.offer(task)) {
-            scheduler.execute(task);
-        }
+        outboundExecutor.execute(task);
     }
 
     public void processMongoTask(Runnable task) {
         mongoExecutor.execute(task);
+    }
+
+    public ExecutorService getMongoExecutor() {
+        return mongoExecutor;
     }
 
     public void connect() {
@@ -228,6 +204,7 @@ public class RedisManager {
     public void shutdown() {
         scheduler.shutdown();
         mongoExecutor.shutdown();
+        outboundExecutor.shutdown(); // YENİ — eklenmezse virtual thread executor kapanışta temiz sonlanmaz
         pool.close();
     }
 

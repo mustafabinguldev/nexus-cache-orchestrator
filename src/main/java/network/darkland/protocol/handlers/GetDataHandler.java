@@ -59,7 +59,7 @@ public final class GetDataHandler implements RequestHandler {
                 );
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "[GetDataHandler/" + addon.addonName() + "] hata", e);
+                LOGGER.log(Level.SEVERE, "[GetDataHandler/" + addon.addonName() + "] error:", e);
             }
         });
     }

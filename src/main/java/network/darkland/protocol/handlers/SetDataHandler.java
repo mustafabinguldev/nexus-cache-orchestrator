@@ -25,7 +25,7 @@ public final class SetDataHandler implements RequestHandler {
                         : json.toFullJson();
 
                 if (rawInput == null || !rawInput.trim().startsWith("{")) {
-                    LOGGER.warning("[SetDataHandler/" + addon.addonName() + "] geçersiz JSON, source=" + source);
+                    LOGGER.warning("[SetDataHandler/" + addon.addonName() + "] invalid JSON, source=" + source);
                     return;
                 }
 
@@ -45,7 +45,7 @@ public final class SetDataHandler implements RequestHandler {
                 }
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "[SetDataHandler/" + addon.addonName() + "] hata", e);
+                LOGGER.log(Level.SEVERE, "[SetDataHandler/" + addon.addonName() + "] error:", e);
             }
         });
     }

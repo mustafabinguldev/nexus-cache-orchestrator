@@ -5,20 +5,25 @@ import com.mongodb.MongoClientSettings;
 import com.mongodb.client.MongoClient;
 import com.mongodb.client.MongoClients;
 import com.mongodb.client.model.Filters;
+import com.mongodb.client.model.Indexes;
 import com.mongodb.client.model.ReplaceOptions;
 import com.mongodb.client.model.Sorts;
 import network.darkland.protocol.DataAddon;
 import org.bson.Document;
 
-
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
 
 public class MongoManager {
 
     private final MongoClient client;
 
-    public MongoManager(String uri) {
+    private final ExecutorService executor;
+
+    public MongoManager(String uri, ExecutorService executor) {
+        this.executor = executor;
+
         ConnectionString connectionString =
                 new ConnectionString(uri);
 
@@ -65,7 +70,7 @@ public class MongoManager {
         return CompletableFuture.supplyAsync(() -> {
             var collection = client.getDatabase(addon.getDatabase()).getCollection(addon.getCollection());
             return collection.countDocuments(Filters.eq(addon.getIdFieldName(), key)) > 0;
-        });
+        }, executor);
     }
 
     public CompletableFuture<String> getValue(DataAddon addon, String key) {
@@ -75,7 +80,7 @@ public class MongoManager {
                     .find(Filters.eq(addon.getIdFieldName(), key))
                     .first();
             return doc != null ? doc.toJson() : null;
-        });
+        }, executor);
     }
 
 
@@ -84,7 +89,7 @@ public class MongoManager {
         return CompletableFuture.runAsync(() -> {
             var collection = client.getDatabase(addon.getDatabase()).getCollection(addon.getCollection());
             collection.deleteOne(Filters.eq(addon.getIdFieldName(), key));
-        });
+        }, executor);
     }
 
 
@@ -98,7 +103,7 @@ public class MongoManager {
                     doc,
                     new ReplaceOptions().upsert(true)
             );
-        });
+        }, executor); // <-- eklendi
     }
 
 
@@ -124,7 +129,7 @@ public class MongoManager {
                     });
 
             return rankingMap;
-        });
+        }, executor); // <-- eklendi
     }
 
     public CompletableFuture<Integer> getPosition(DataAddon addon, String key, String fieldName, String orderType) {
@@ -145,7 +150,13 @@ public class MongoManager {
             long countAhead = collection.countDocuments(filter);
 
             return (int) (countAhead + 1);
-        });
+        }, executor); // <-- eklendi
+    }
+
+    public void ensureIndex(DataAddon addon, String fieldName) {
+        client.getDatabase(addon.getDatabase())
+                .getCollection(addon.getCollection())
+                .createIndex(Indexes.ascending(fieldName));
     }
 
 }

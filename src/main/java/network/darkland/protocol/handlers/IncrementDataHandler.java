@@ -27,7 +27,7 @@ public final class IncrementDataHandler implements RequestHandler {
             Object lock = null;
             try {
                 if (!json.containsKey("key") || !json.containsKey("field") || !json.containsKey("amount")) {
-                    LOGGER.warning("[IncrementDataHandler/" + addon.addonName() + "] eksik alan (key/field/amount)");
+                    LOGGER.warning("[IncrementDataHandler/" + addon.addonName() + "] missing field (key/field/amount)");
                     return;
                 }
 
@@ -36,20 +36,19 @@ public final class IncrementDataHandler implements RequestHandler {
                 Object keyValue = json.get("key",    addon.getIdClassName());
 
                 if (field == null || amount == null || keyValue == null) {
-                    LOGGER.warning("[IncrementDataHandler/" + addon.addonName() + "] null değer tespit edildi");
+                    LOGGER.warning("[IncrementDataHandler/" + addon.addonName() + "] Null value detected");
                     return;
                 }
 
                 json.set(addon.getIdFieldName(), keyValue);
 
-                // Per-key lock — aynı key için paralel increment'i engeller.
                 lockKey = keyValue.toString();
                 lock = addon.acquireKeyLock(lockKey);
 
                 synchronized (lock) {
                     Optional<DataModel> dataModelOpt = addon.getData(json);
                     if (dataModelOpt.isEmpty()) {
-                        LOGGER.warning("[IncrementDataHandler/" + addon.addonName() + "] model bulunamadı, key=" + keyValue);
+                        LOGGER.warning("[IncrementDataHandler/" + addon.addonName() + "] model not found, key=" + keyValue);
                         return;
                     }
 
@@ -57,7 +56,7 @@ public final class IncrementDataHandler implements RequestHandler {
                     JsonNode  rootNode  = MAPPER.readTree(dataModel.getValueJson());
 
                     if (!rootNode.has(field) || !rootNode.get(field).isNumber()) {
-                        LOGGER.warning("[IncrementDataHandler/" + addon.addonName() + "] alan eksik ya da sayı değil -> " + field);
+                        LOGGER.warning("[IncrementDataHandler/" + addon.addonName() + "] The field is missing or is not a number. -> " + field);
                         return;
                     }
 
@@ -80,7 +79,7 @@ public final class IncrementDataHandler implements RequestHandler {
                 }
 
             } catch (Exception e) {
-                LOGGER.log(Level.SEVERE, "[IncrementDataHandler/" + addon.addonName() + "] hata", e);
+                LOGGER.log(Level.SEVERE, "[IncrementDataHandler/" + addon.addonName() + "] error:", e);
             } finally {
                 if (lockKey != null && lock != null) {
                     addon.releaseKeyLock(lockKey, lock);

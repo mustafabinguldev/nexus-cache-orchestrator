@@ -49,7 +49,7 @@ public class NexusApplication {
         this.redisManager    = new RedisManager(this, redisHost, redisPort, redisUser, redisPass);
         this.protocolHandler = new ProtocolHandler();
         this.dataContainer   = new RedisDataContainer();
-        this.mongoManager    = new MongoManager(mongoUri);
+        this.mongoManager    = new MongoManager(mongoUri, redisManager.getMongoExecutor());
 
         this.redisManager.processTask(() -> {
             if (!mongoManager.verifyConnection()) {
@@ -116,18 +116,18 @@ public class NexusApplication {
 
             if (!addonFolder.exists()) {
                 if (!addonFolder.mkdirs()) {
-                    LOGGER.severe("Addon klasörü oluşturulamadı: "
+                        LOGGER.severe("Could not create the add-on folder.: "
                             + addonFolder.getAbsolutePath());
                     return;
                 }
 
-                LOGGER.info("Addon klasörü oluşturuldu: "
+                LOGGER.info("Addon folder created: "
                         + addonFolder.getAbsolutePath());
                 return;
             }
 
             if (!addonFolder.isDirectory()) {
-                LOGGER.severe("Addon yolu bir klasör değil: "
+                LOGGER.severe("The add-on path is not a folder.: "
                         + addonFolder.getAbsolutePath());
                 return;
             }
@@ -137,12 +137,12 @@ public class NexusApplication {
             );
 
             if (files == null) {
-                LOGGER.warning("Addon klasörü okunamadı: "
+                LOGGER.warning("The add-on folder could not be read.: "
                         + addonFolder.getAbsolutePath());
                 return;
             }
 
-            LOGGER.info("Addon klasörü: "
+            LOGGER.info("Addon folder: "
                     + addonFolder.getAbsolutePath());
 
             for (File file : files) {
@@ -152,7 +152,7 @@ public class NexusApplication {
         } catch (Exception e) {
             LOGGER.log(
                     java.util.logging.Level.SEVERE,
-                    "Addon klasörü yüklenirken hata",
+                    "Error while loading addon folder.",
                     e
             );
         }
@@ -188,12 +188,12 @@ public class NexusApplication {
                     }
 
                 } catch (Throwable t) {
-                    LOGGER.fine("Sınıf atlandı: " + className + " — " + t.getMessage());
+                    LOGGER.fine("Error: " + className + " — " + t.getMessage());
                 }
             }
 
         } catch (Exception e) {
-            LOGGER.warning("JAR yüklenemedi: " + file.getName() + " — " + e.getMessage());
+            LOGGER.warning("Error: " + file.getName() + " — " + e.getMessage());
         }
     }
 
