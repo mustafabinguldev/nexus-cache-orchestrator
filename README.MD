@@ -1,6 +1,6 @@
 # ⬡ Nexus Core — Centralized Data Orchestration Layer for Distributed Minecraft Servers
 
-> *"The central brain between your distributed Minecraft infrastructure and persistent data layer."*
+> *"The central brain between your distributed Game Server infrastructure and persistent data layer."*
 
 ---
 ## 📖 Table of Contents
