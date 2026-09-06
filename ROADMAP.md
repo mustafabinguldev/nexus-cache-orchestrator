@@ -13,5 +13,8 @@ Here is an overview of the planned features, enhancements, and architectural goa
 - [ ] **Dynamic Connection Routing:** Enable context-aware database connection switching.
 - [ ] **Unified Adapter Layer:** Standardize database queries across different engine providers.
 
+| **v1.7.1** | **Minecraft SDK Release** | PaperMC & Spigot Engine | 📅 Planned |
+| **v2.0.0** | **Unity Game Engine SDK** | Unity (C# / Multiplatform) | 📅 Planned |
+
 ---
 > *Note: Features and priorities are subject to change based on community feedback.*
