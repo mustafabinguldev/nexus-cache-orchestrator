@@ -6,6 +6,7 @@ import network.darkland.protocol.DataAddon;
 import network.darkland.protocol.ProtocolHandler;
 import network.darkland.redis.RedisDataContainer;
 import network.darkland.redis.RedisManager;
+import network.darkland.resilience.ResilienceConfig;
 
 import javax.swing.*;
 import java.io.File;
@@ -46,10 +47,12 @@ public class NexusApplication {
     ) {
         application = this;
 
-        this.redisManager    = new RedisManager(this, redisHost, redisPort, redisUser, redisPass);
+        ResilienceConfig resilienceConfig = new ResilienceConfig();
+
+        this.redisManager    = new RedisManager(this, redisHost, redisPort, redisUser, redisPass, resilienceConfig);
         this.protocolHandler = new ProtocolHandler();
         this.dataContainer   = new RedisDataContainer();
-        this.mongoManager    = new MongoManager(mongoUri, redisManager.getMongoExecutor());
+        this.mongoManager    = new MongoManager(mongoUri, redisManager.getMongoExecutor(), resilienceConfig);
 
         this.redisManager.processTask(() -> {
             if (!mongoManager.verifyConnection()) {
@@ -116,7 +119,7 @@ public class NexusApplication {
 
             if (!addonFolder.exists()) {
                 if (!addonFolder.mkdirs()) {
-                        LOGGER.severe("Could not create the add-on folder.: "
+                    LOGGER.severe("Could not create the add-on folder.: "
                             + addonFolder.getAbsolutePath());
                     return;
                 }

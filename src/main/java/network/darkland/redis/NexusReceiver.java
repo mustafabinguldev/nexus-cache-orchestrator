@@ -10,14 +10,13 @@ import network.darkland.redis.security.NonceValidator;
 import network.darkland.redis.security.SignatureValidator;
 import network.darkland.redis.security.TimestampValidator;
 import network.darkland.util.JsonUtils;
-import redis.clients.jedis.JedisPubSub;
 
 import java.util.List;
 import java.util.Optional;
 import java.util.logging.Level;
 import java.util.logging.Logger;
 
-public class NexusReceiver extends JedisPubSub {
+public class NexusReceiver {
 
     private static final Logger LOGGER = Logger.getLogger(NexusReceiver.class.getName());
 
@@ -39,11 +38,6 @@ public class NexusReceiver extends JedisPubSub {
 
     public NexusReceiver(RedisManager redisManager) {
         this.redisManager = redisManager;
-    }
-
-    @Override
-    public void onMessage(String channel, String message) {
-        redisManager.enqueueMessage(message);
     }
 
     public void handleSyncMessage(String message) {
