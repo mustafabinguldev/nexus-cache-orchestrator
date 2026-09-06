@@ -8,6 +8,7 @@
 * [What is Nexus Core?](#-what-is-nexus-core)
 * [System Architecture](#️-system-architecture)
 * [Data Flow](#-data-flow)
+* [Reliable Messaging (Redis Streams)](#-reliable-messaging-redis-streams)
 * [Security Layer (New)](#-security-layer-new)
 * [Core Components](#-core-components)
 * [Version History / Changelog](#-version-history--changelog)
@@ -26,7 +27,7 @@
 
 ## 🧠 What is Nexus Core?
 
-**Nexus Core** is a standalone Java application that acts as a **centralized orchestration layer** for a distributed Minecraft network. Instead of every Spigot server connecting directly to MongoDB and managing its own cache, all data operations are delegated to Nexus Core through a **Redis pub/sub messaging layer**.
+**Nexus Core** is a standalone Java application that acts as a **centralized orchestration layer** for a distributed Minecraft network. Instead of every Spigot server connecting directly to MongoDB and managing its own cache, all data operations are delegated to Nexus Core through a **Redis Streams messaging layer** (inbound requests) paired with **Redis Pub/Sub** (outbound, per-server responses).
 
 This design solves three critical problems encountered at scale:
 
@@ -51,7 +52,8 @@ In short, Nexus Core can be thought of as a **microservice** built specifically 
 │   └──────┬───────┘    └──────┬───────┘    └──────┬───────┘     │
 │          │                   │                   │             │
 │          └───────────────────┼───────────────────┘             │
-│                              │ Redis Pub/Sub (signed packets)  │
+│                              │ Redis Stream (signed packets,   │
+│                              │ XADD → consumer group + XACK)   │
 │                    ┌─────────▼──────────┐                      │
 │                    │    Redis Broker     │                      │
 │                    │   (Message Layer)   │                      │
@@ -93,13 +95,13 @@ Every interaction follows a strict **request → validation → orchestration �
 ```text
 Spigot Server              Redis                 Nexus Core              MongoDB
       │                       │                        │                     │
-      │  1. PUBLISH packet     │                        │                     │
+      │  1. XADD to stream     │                        │                     │
       │  { protocol, source,   │                        │                     │
       │    type, data,         │                        │                     │
       │    sig, nonce,         │                        │                     │
       │    timestamp }         │                        │                     │
       │───────────────────────►│                        │                     │
-      │                        │  2. Route to listener  │                     │
+      │                        │  2. XREADGROUP delivers│                     │
       │                        │───────────────────────►│                     │
       │                        │                        │ 3. Security chain:  │
       │                        │                        │   a) HMAC signature │
@@ -121,11 +123,18 @@ Spigot Server              Redis                 Nexus Core              MongoDB
       │                        │                        │────────────────────►│
       │                        │                        │◄── Document ────────│
       │                        │                        │ 8. Write to cache   │
-      │                        │  9. PUBLISH response   │                     │
+      │                        │                        │ 9. XACK + XDEL      │
+      │                        │                        │    (entry consumed) │
+      │                        │ 10. PUBLISH response   │                     │
       │                        │◄───────────────────────│                     │
-      │  10. Receive response  │                        │                     │
+      │  11. Receive response  │                        │                     │
       │◄───────────────────────│                        │                     │
 ```
+
+> The response leg (Nexus → Spigot) is still Pub/Sub: it's a short-lived reply to a
+> request the same server just made, so there's nothing worth persisting there.
+> The request leg (Spigot → Nexus) is a Stream precisely because it *is* worth
+> persisting — see [Reliable Messaging](#-reliable-messaging-redis-streams) below.
 
 ### Request Types
 
@@ -140,6 +149,76 @@ Spigot Server              Redis                 Nexus Core              MongoDB
 | `RANK_FINDER`    | Calculates a key's position in the global ranking | Optimized query                  | Bypass        |
 | `BROADCAST`      | Sends data to a target server via Redis pub/sub   | None                             | Bypass        |
 | `LOAD_CACHE`     | Preloads a document into memory by ID             | `findOne()`                      | Warm          |
+
+---
+
+## 🔁 Reliable Messaging (Redis Streams)
+
+### The problem this solves
+
+With plain Redis Pub/Sub, a message published while Nexus Core is disconnected —
+a deploy, a restart, a brief network blip — is gone forever. Nobody was
+"listening" at that exact millisecond, so Redis just drops it. In a distributed
+system, that's not a corner case, it's a matter of time: a `SET_DATA` for a
+player's balance sent during a rolling restart could simply vanish, with no
+error on either side.
+
+### What changed
+
+The **inbound** bus (Spigot → Nexus) now runs on a **Redis Stream** with a
+**consumer group**, instead of a Pub/Sub channel:
+
+| | Pub/Sub (old) | Streams (new) |
+| --- | --- | --- |
+| Delivery if no listener | Dropped | Kept in the stream |
+| Delivery if Nexus crashes mid-processing | Lost | Redelivered (`XAUTOCLAIM`) |
+| Acknowledgement | None (fire-and-forget) | Explicit `XACK` |
+| Guarantee | At-most-once | **At-least-once** |
+
+The **outbound** leg (Nexus → Spigot responses, `darkland_nexus_<source>`) is
+**intentionally left on Pub/Sub**. Each response is a short-lived reply to a
+request the same server made moments ago — there is nothing durable worth
+persisting there, and turning every server's response channel into its own
+growing Stream would add bookkeeping for no real benefit.
+
+### How it works
+
+* **Stream key:** `darkland_nexus_stream`
+* **Consumer group:** `nexus-core-group` — all Nexus Core instances share this
+  group, so if you ever run more than one instance, work is load-balanced
+  across them instead of every instance processing every message.
+* **Flow:** `XADD` (producer) → `XREADGROUP` (Nexus reads) → handler runs →
+  `XACK` + `XDEL` (entry is done, removed from the stream to keep it bounded).
+* **Crash recovery:** a background sweep calls `XAUTOCLAIM` every 15 seconds to
+  reclaim any entry that's been delivered but not acknowledged for 30+ seconds
+  (e.g. Nexus Core died mid-request) and redelivers it. This also runs once
+  immediately on boot, so a restart catches up on anything left pending from
+  before the crash.
+* **Idempotency note:** at-least-once means "at least" — a crash between
+  finishing a write and sending the `XACK` can cause the same entry to be
+  processed twice. This is safe here because `SET_DATA`/`REMOVE_DATA` are
+  upserts/deletes and `GET_DATA` is a pure read, but keep this in mind if you
+  write a custom `DataAddon` with side effects that aren't naturally
+  idempotent.
+
+### ⚠️ Breaking change for producers
+
+Spigot-side plugins must switch from `PUBLISH darkland_nexus <json>` to
+`XADD darkland_nexus_stream * payload <json>` — the JSON payload itself is
+unchanged, it just needs to be stored under a field called `payload`:
+
+```java
+// Before (Pub/Sub)
+jedis.publish("darkland_nexus", jsonPacket);
+
+// After (Streams)
+Map<String, String> fields = new HashMap<>();
+fields.put("payload", jsonPacket);
+jedis.xadd("darkland_nexus_stream", XAddParams.xAddParams(), fields);
+```
+
+Response channels (`darkland_nexus_<source>`) are unchanged — you still
+`SUBSCRIBE`/`onMessage` for those exactly as before.
 
 ---
 ## 🐳 Docker Installation
