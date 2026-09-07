@@ -1,6 +1,11 @@
 package network.darkland.redis;
 
+import com.github.benmanes.caffeine.cache.Cache;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import com.github.benmanes.caffeine.cache.Expiry;
+import com.github.benmanes.caffeine.cache.RemovalCause;
 import network.darkland.NexusApplication;
+import network.darkland.cache.L1InvalidationBus;
 import network.darkland.model.DataModel;
 import network.darkland.protocol.NexusJsonDataContainer;
 import redis.clients.jedis.Jedis;
@@ -22,16 +27,51 @@ public class RedisDataContainer {
 
     private static final int RECONCILE_BATCH_SIZE = 50;
 
-    private final ConcurrentHashMap<String, DataModel> keyToModel;
+    private static final long L1_MAX_ENTRIES = 100_000;
+
+    private final Cache<String, DataModel> keyToModel;
 
     private final ConcurrentHashMap<String, String> idToKey;
 
     private final Set<String> dirtyKeys;
 
+    private final L1InvalidationBus invalidationBus;
+
     public RedisDataContainer() {
-        this.keyToModel = new ConcurrentHashMap<>();
         this.idToKey    = new ConcurrentHashMap<>();
         this.dirtyKeys  = ConcurrentHashMap.newKeySet();
+        Expiry<String, DataModel> perAddonExpiry = new Expiry<>() {
+            @Override
+            public long expireAfterCreate(String key, DataModel model, long currentTime) {
+                int ttlSeconds = model.getAddon().getCacheTTL();
+                return TimeUnit.SECONDS.toNanos(Math.max(ttlSeconds, 1));
+            }
+
+            @Override
+            public long expireAfterUpdate(String key, DataModel model, long currentTime, long currentDuration) {
+                int ttlSeconds = model.getAddon().getCacheTTL();
+                return TimeUnit.SECONDS.toNanos(Math.max(ttlSeconds, 1));
+            }
+
+            @Override
+            public long expireAfterRead(String key, DataModel model, long currentTime, long currentDuration) {
+                return currentDuration;
+            }
+        };
+
+        this.keyToModel = Caffeine.newBuilder()
+                .maximumSize(L1_MAX_ENTRIES)
+                .expireAfter(perAddonExpiry)
+                .removalListener((String key, DataModel model, RemovalCause cause) -> {
+                    if (model != null) {
+                        idToKey.remove(model.getId(), key);
+                    }
+                })
+                .recordStats()
+                .build();
+
+        this.invalidationBus = new L1InvalidationBus(this::removeModelLocal);
+        this.invalidationBus.start();
 
         RedisManager rm = NexusApplication.getApplication().getRedisManager();
         rm.scheduleTask(this::startL1SyncTask,         10, 10, TimeUnit.SECONDS);
@@ -63,7 +103,7 @@ public class RedisDataContainer {
                     jedis.subscribe(new JedisPubSub() {
                         @Override
                         public void onMessage(String channel, String message) {
-                            removeModel(message);
+                            removeModelLocal(message);
                             LOGGER.warning("[Nexus] Key expired: " + message + ", Removing from L1 cache to maintain data integrity.");
                         }
                     }, expiredChannel);
@@ -75,11 +115,11 @@ public class RedisDataContainer {
     }
 
     private void startL1SyncTask() {
-        if (keyToModel.isEmpty()) return;
+        if (keyToModel.asMap().isEmpty()) return;
 
         RedisManager rm = NexusApplication.getApplication().getRedisManager();
 
-        rm.processTask(() -> keyToModel.forEach((key, model) -> {
+        rm.processTask(() -> keyToModel.asMap().forEach((key, model) -> {
             if (dirtyKeys.contains(key)) return;
 
             Optional<String> redisOpt = rm.getData(key);
@@ -106,7 +146,7 @@ public class RedisDataContainer {
 
         rm.processMongoTask(() -> {
             for (String key : keysToFlush) {
-                DataModel model = keyToModel.get(key);
+                DataModel model = keyToModel.getIfPresent(key);
                 if (model == null) {
                     dirtyKeys.remove(key);
                     continue;
@@ -130,17 +170,17 @@ public class RedisDataContainer {
     }
 
     private void startReconciliationTask() {
-        if (keyToModel.isEmpty()) return;
+        if (keyToModel.asMap().isEmpty()) return;
 
         RedisManager rm = NexusApplication.getApplication().getRedisManager();
         rm.processMongoTask(() -> {
-            List<String> keys  = new ArrayList<>(keyToModel.keySet());
+            List<String> keys  = new ArrayList<>(keyToModel.asMap().keySet());
             List<CompletableFuture<?>> batch = new ArrayList<>(RECONCILE_BATCH_SIZE);
 
             for (String key : keys) {
                 if (dirtyKeys.contains(key)) continue;
 
-                DataModel model = keyToModel.get(key);
+                DataModel model = keyToModel.getIfPresent(key);
                 if (model == null) continue;
 
                 String redisJson = rm.getData(key).orElseGet(model::getValueJson);
@@ -204,7 +244,6 @@ public class RedisDataContainer {
 
     public void addModelDirect(String key, DataModel model) {
         writeToL1AndRedis(key, model);
-        // Mongo yazımı bloklayan bir işlem — ayrı Mongo havuzunda çalıştır.
         NexusApplication.getApplication().getRedisManager().processMongoTask(() -> {
             try {
                 NexusApplication.getApplication().getMongoManager()
@@ -212,36 +251,52 @@ public class RedisDataContainer {
                         .get();
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE,
-                        "[addModelDirect] Mongo yazımı başarısız: " + key, e);
+                        "[addModelDirect] Mongo write failed: " + key, e);
             }
         });
     }
 
-    public void removeModel(String key) {
-        DataModel removed = keyToModel.remove(key);
-        if (removed == null) return;  // zaten yoktu
+    public void broadcastRemoteInvalidation(String key) {
+        invalidationBus.publishInvalidation(key);
+    }
 
-        idToKey.remove(removed.getId());
-        dirtyKeys.remove(key);
+    public void removeModel(String key) {
+        removeModelLocal(key);
+        invalidationBus.publishInvalidation(key);
         NexusApplication.getApplication().getRedisManager().deleteData(key);
+    }
+
+    private void removeModelLocal(String key) {
+        DataModel removed = keyToModel.asMap().remove(key);
+        if (removed == null) return;
+
+        idToKey.remove(removed.getId(), key);
+        dirtyKeys.remove(key);
     }
 
     public Optional<DataModel> getDataModelFromId(String id) {
         String key = idToKey.get(id);
         if (key == null) return Optional.empty();
-        return Optional.ofNullable(keyToModel.get(key));
+        return Optional.ofNullable(keyToModel.getIfPresent(key));
     }
 
     public Optional<DataModel> getDataModelFromKey(String key) {
-        return Optional.ofNullable(keyToModel.get(key));
+        return Optional.ofNullable(keyToModel.getIfPresent(key));
     }
 
     public Set<String> getDirtyKeys() { return dirtyKeys; }
-    public int getDataSize()          { return keyToModel.size(); }
+
+    public int getDataSize() { return (int) keyToModel.estimatedSize(); }
+
+    public com.github.benmanes.caffeine.cache.stats.CacheStats getL1Stats() {
+        return keyToModel.stats();
+    }
 
     private void writeToL1AndRedis(String key, DataModel model) {
-        keyToModel.put(key, model);
-        idToKey.put(model.getId(), key);
+        if (model.getAddon().l1CacheEnabled()) {
+            keyToModel.put(key, model);
+            idToKey.put(model.getId(), key);
+        }
         NexusApplication.getApplication().getRedisManager().setData(key, model.getValueJson(), model.getAddon());
     }
 }

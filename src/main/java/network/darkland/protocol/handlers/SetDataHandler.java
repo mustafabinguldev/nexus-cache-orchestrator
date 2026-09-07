@@ -41,6 +41,9 @@ public final class SetDataHandler implements RequestHandler {
                     existing.setValueJson(updated);
 
                     app.getRedisManager().setData(existing.getKey(), updated, existing.getAddon());
+
+                    app.getDataContainer().broadcastRemoteInvalidation(existing.getKey());
+
                     addon.pushMetrics(new NexusJsonDataContainer(updated));
                 }
 

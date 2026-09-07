@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.influxdb.client.domain.WritePrecision;
 import com.influxdb.client.write.Point;
+import network.darkland.cache.CacheMetrics;
 import network.darkland.Influxdb.annotations.NexusMetric;
 import network.darkland.Influxdb.annotations.NexusMetricConfig;
 import network.darkland.NexusApplication;
@@ -98,6 +99,10 @@ public abstract class DataAddon {
     public abstract String  getDatabase();
     public abstract String  getCollection();
     public abstract int     getCacheTTL();
+
+    public boolean l1CacheEnabled() {
+        return true;
+    }
 
     protected List<MessageValidator> additionalValidators() {
         return List.of();
@@ -304,6 +309,7 @@ public abstract class DataAddon {
 
             Optional<DataModel> l1 = app.getDataContainer().getDataModelFromKey(keyTag);
             if (l1.isPresent()) {
+                CacheMetrics.get().recordL1Hit(cacheKeyHeaderTag());
                 pushMetrics(new NexusJsonDataContainer(l1.get().getValueJson()));
                 return l1;
             }
@@ -316,6 +322,7 @@ public abstract class DataAddon {
                     LOGGER.warning("[DataAddon/" + addonName() + "] Corrupt data detected in Redis; deleting key.=" + keyTag);
                     redis.deleteData(keyTag);
                 } else {
+                    CacheMetrics.get().recordL2Hit(cacheKeyHeaderTag());
                     DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
                             modelInitComp(redisJson), this, specificValue);
                     app.getDataContainer().addModelFix(keyTag, m);
@@ -324,9 +331,9 @@ public abstract class DataAddon {
                 }
             }
 
-            // L3 — MongoDB
             String dbJson = app.getMongoManager().getValue(this, specificValue).join();
             if (dbJson != null) {
+                CacheMetrics.get().recordL3Hit(cacheKeyHeaderTag());
                 DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
                         modelInitComp(dbJson), this, specificValue);
                 app.getDataContainer().addModel(keyTag, m);
