@@ -13,14 +13,25 @@ let sessionStartedAt = null;
 let lastStats = null;
 let cachedHistory = [];
 let dirtyHistory = [];
+let l1RatioHistory = [];
 let lastDeltaCached = 0;
 let lastDeltaDirty = 0;
 
 let addonsData = [];
+let cacheMetricsData = [];
 let sortKey = "id";
 let sortDir = "asc";
 let searchTerm = "";
 let expandedAddonId = null;
+
+// ── Key Gezgini state ──
+let keysSelectedAddonId = null;
+let keysCursor = "0";
+let keysData = [];         // { key, inL1, ttl }
+let keysExpandedKey = null;
+let keysValueCache = {};   // key -> { source, value, ttl }
+let keysAddonOptionsPopulated = false;
+let keysLoadErrorMessage = null;
 
 let connState = "ok"; // "ok" | "fail"
 let eventLogEntries = []; // { level, key, params, ts }
@@ -53,6 +64,36 @@ const translations = {
     "stats.mongo.fail": "Kopuk",
     "stats.mongo.sub.ok": "bağlantı sağlıklı",
     "stats.mongo.sub.fail": "bağlantı sağlanamıyor",
+    "stats.l1ratio": "L1 isabet oranı",
+    "stats.l1ratio.sub.cluster": "cluster mode: açık",
+    "stats.l1ratio.sub.single": "cluster mode: kapalı (tek instance)",
+    "cache.title": "Cache Performansı (L1 / L2 / L3)",
+    "cache.th.region": "Eklenti",
+    "cache.th.l1": "L1 (memory)",
+    "cache.th.l2": "L2 (Redis)",
+    "cache.th.l3": "L3 (Mongo)",
+    "cache.th.ratio": "L1 oranı",
+    "cache.empty": "Henüz cache verisi yok.",
+    "cache.disabled": "L1 kapalı",
+    "keys.title": "Key Gezgini",
+    "keys.load": "Anahtarları getir",
+    "keys.loadmore": "Daha fazla yükle",
+    "keys.selectPrompt": "Bir eklenti seçip anahtarları getirin.",
+    "keys.empty": "Bu eklentide anahtar bulunamadı.",
+    "keys.th.key": "Key",
+    "keys.th.l1": "L1'de mi?",
+    "keys.th.ttl": "TTL",
+    "keys.yes": "Evet",
+    "keys.no": "Hayır",
+    "keys.ttl.none": "yok / süresiz",
+    "keys.ttl.missing": "—",
+    "keys.detail.loading": "Değer yükleniyor…",
+    "keys.detail.source": "Kaynak",
+    "keys.detail.ttl": "Kalan TTL",
+    "keys.detail.value": "Değer (JSON)",
+    "keys.source.l1": "L1 (memory)",
+    "keys.source.l2": "L2 (Redis)",
+    "keys.source.miss": "Bulunamadı",
     "delta.none": "değişim yok",
     "delta.suffix": "/ son yenileme",
     "delta.unit.records": "kayıt",
@@ -118,6 +159,36 @@ const translations = {
     "stats.mongo.fail": "Disconnected",
     "stats.mongo.sub.ok": "connection healthy",
     "stats.mongo.sub.fail": "connection unavailable",
+    "stats.l1ratio": "L1 hit ratio",
+    "stats.l1ratio.sub.cluster": "cluster mode: on",
+    "stats.l1ratio.sub.single": "cluster mode: off (single instance)",
+    "cache.title": "Cache Performance (L1 / L2 / L3)",
+    "cache.th.region": "Add-on",
+    "cache.th.l1": "L1 (memory)",
+    "cache.th.l2": "L2 (Redis)",
+    "cache.th.l3": "L3 (Mongo)",
+    "cache.th.ratio": "L1 ratio",
+    "cache.empty": "No cache data yet.",
+    "cache.disabled": "L1 disabled",
+    "keys.title": "Key Browser",
+    "keys.load": "Load keys",
+    "keys.loadmore": "Load more",
+    "keys.selectPrompt": "Select an add-on and load its keys.",
+    "keys.empty": "No keys found for this add-on.",
+    "keys.th.key": "Key",
+    "keys.th.l1": "In L1?",
+    "keys.th.ttl": "TTL",
+    "keys.yes": "Yes",
+    "keys.no": "No",
+    "keys.ttl.none": "none / persistent",
+    "keys.ttl.missing": "—",
+    "keys.detail.loading": "Loading value…",
+    "keys.detail.source": "Source",
+    "keys.detail.ttl": "Remaining TTL",
+    "keys.detail.value": "Value (JSON)",
+    "keys.source.l1": "L1 (memory)",
+    "keys.source.l2": "L2 (Redis)",
+    "keys.source.miss": "Not found",
     "delta.none": "no change",
     "delta.suffix": "/ last refresh",
     "delta.unit.records": "records",
@@ -207,6 +278,8 @@ function refreshDynamicTranslations() {
     renderStatsText();
   }
   renderAddons();
+  renderCacheMetrics();
+  renderKeysTable();
   renderEventLog();
   updateCountdownLabel();
   autorefreshToggle.textContent = autoRefreshPaused ? t("footer.resume") : t("footer.pause");
@@ -226,6 +299,9 @@ const rememberCheckbox = document.getElementById("remember-username");
 const refreshBtn = document.getElementById("refresh-btn");
 const autorefreshToggle = document.getElementById("autorefresh-toggle");
 const addonSearchInput = document.getElementById("addon-search");
+const keysAddonSelect = document.getElementById("keys-addon-select");
+const keysLoadBtn = document.getElementById("keys-load-btn");
+const keysLoadMoreBtn = document.getElementById("keys-loadmore-btn");
 const connLed = document.getElementById("conn-led");
 const connText = document.getElementById("conn-text");
 
@@ -425,14 +501,18 @@ async function authorizedFetch(path) {
 async function fetchAll() {
   setConnState("pending");
   try {
-    const [stats, addons] = await Promise.all([
+    const [stats, addons, cacheMetrics] = await Promise.all([
       authorizedFetch("/api/stats"),
       authorizedFetch("/api/addons"),
+      authorizedFetch("/api/cache-metrics"),
     ]);
     setConnState("ok");
     applyStats(stats);
     addonsData = addons;
     renderAddons();
+    populateKeysAddonSelect();
+    cacheMetricsData = cacheMetrics.regions || [];
+    renderCacheMetrics();
   } catch (err) {
     if (err.message !== "Unauthorized") {
       setConnState("fail");
@@ -466,10 +546,13 @@ function applyStats(stats) {
 
   cachedHistory.push(stats.cachedEntries);
   dirtyHistory.push(stats.dirtyKeys);
+  l1RatioHistory.push(Math.round((stats.l1HitRatio || 0) * 100));
   if (cachedHistory.length > HISTORY_LENGTH) cachedHistory.shift();
   if (dirtyHistory.length > HISTORY_LENGTH) dirtyHistory.shift();
+  if (l1RatioHistory.length > HISTORY_LENGTH) l1RatioHistory.shift();
   drawSparkline("spark-cached", cachedHistory, "var(--amber)");
   drawSparkline("spark-dirty", dirtyHistory, "var(--red)");
+  drawSparkline("spark-l1ratio", l1RatioHistory, "var(--green)");
 
   const dirtyCard = document.getElementById("stat-dirty-card");
   const wasWarn = dirtyCard.classList.contains("warn");
@@ -500,6 +583,10 @@ function renderStatsText() {
   document.getElementById("stat-mongo-sub").textContent = stats.mongoConnected
       ? t("stats.mongo.sub.ok")
       : t("stats.mongo.sub.fail");
+
+  document.getElementById("stat-l1ratio").textContent = `${Math.round((stats.l1HitRatio || 0) * 100)}%`;
+  document.getElementById("stat-l1ratio-sub").textContent =
+      t(stats.clusterMode ? "stats.l1ratio.sub.cluster" : "stats.l1ratio.sub.single");
 
   document.getElementById("last-updated").textContent =
       new Date(stats.timestamp).toLocaleTimeString(currentLang === "tr" ? "tr-TR" : "en-US");
@@ -643,6 +730,193 @@ function renderAddons() {
       renderAddons();
     });
   });
+}
+
+// ── Cache performansı tablosu (L1/L2/L3 hit'leri) ──
+function renderCacheMetrics() {
+  const body = document.getElementById("cache-body");
+  if (!body) return;
+
+  if (!cacheMetricsData.length) {
+    body.innerHTML = `<tr><td colspan="5" class="dim empty-cell">${escapeHtml(t("cache.empty"))}</td></tr>`;
+    return;
+  }
+
+  // En çok L1'e uğrayan eklenti en üstte — dashboard'ı açan kişi
+  // "hangi eklenti L1'den en çok faydalanıyor" sorusuna anında cevap bulsun.
+  const sorted = [...cacheMetricsData].sort((a, b) => (b.l1Hits + b.l2Hits + b.l3Hits) - (a.l1Hits + a.l2Hits + a.l3Hits));
+
+  body.innerHTML = sorted.map((r) => {
+    const ratioPct = Math.round((r.l1Ratio || 0) * 100);
+    const ratioCell = r.l1Enabled
+        ? `<div class="ratio-cell">
+             <div class="ratio-bar"><div class="ratio-bar-fill" style="width:${ratioPct}%"></div></div>
+             <span>${ratioPct}%</span>
+           </div>`
+        : `<span class="dim">${escapeHtml(t("cache.disabled"))}</span>`;
+
+    return `
+    <tr>
+      <td class="name-cell">${escapeHtml(r.addonName)}</td>
+      <td>${r.l1Hits}</td>
+      <td>${r.l2Hits}</td>
+      <td>${r.l3Hits}</td>
+      <td>${ratioCell}</td>
+    </tr>`;
+  }).join("");
+}
+
+// ── Key Gezgini ──
+function populateKeysAddonSelect() {
+  if (!keysAddonSelect || !addonsData.length) return;
+  const previousValue = keysAddonSelect.value;
+  keysAddonSelect.innerHTML = addonsData
+      .map((a) => `<option value="${escapeHtml(a.id)}">${escapeHtml(a.name)}</option>`)
+      .join("");
+  if (previousValue && addonsData.some((a) => String(a.id) === previousValue)) {
+    keysAddonSelect.value = previousValue;
+  }
+}
+
+keysLoadBtn?.addEventListener("click", () => {
+  const id = keysAddonSelect.value;
+  if (!id) return;
+  keysSelectedAddonId = id;
+  keysCursor = "0";
+  keysData = [];
+  keysExpandedKey = null;
+  keysValueCache = {};
+  keysLoadErrorMessage = null;
+  keysLoadMoreBtn.style.display = "none";
+  loadKeysPage();
+});
+
+keysLoadMoreBtn?.addEventListener("click", () => {
+  loadKeysPage();
+});
+
+async function loadKeysPage() {
+  if (!keysSelectedAddonId) return;
+  try {
+    const res = await authorizedFetch(
+        `/api/addons/${encodeURIComponent(keysSelectedAddonId)}/keys?cursor=${encodeURIComponent(keysCursor)}&limit=50`
+    );
+    if (res.error) {
+      keysData = [];
+      keysLoadErrorMessage = res.message
+          ? `${res.error}: ${res.message} (${res.exception || ""})`
+          : res.error;
+      renderKeysTable();
+      return;
+    }
+    keysLoadErrorMessage = null;
+    keysData = keysData.concat(res.keys);
+    keysCursor = res.nextCursor;
+    keysLoadMoreBtn.style.display = res.done ? "none" : "inline-flex";
+    renderKeysTable();
+  } catch (err) {
+    if (err.message !== "Unauthorized") {
+      keysLoadErrorMessage = `HTTP hata: ${err.message}`;
+      renderKeysTable();
+      console.error("Key listesi alınamadı:", err);
+    }
+  }
+}
+
+function renderKeysTable() {
+  const body = document.getElementById("keys-body");
+  if (!body) return;
+
+  if (keysLoadErrorMessage) {
+    body.innerHTML = `<tr><td colspan="3" class="dim empty-cell" style="color: var(--red);">${escapeHtml(keysLoadErrorMessage)}</td></tr>`;
+    return;
+  }
+
+  if (!keysData.length) {
+    const promptKey = keysSelectedAddonId ? "keys.empty" : "keys.selectPrompt";
+    body.innerHTML = `<tr><td colspan="3" class="dim empty-cell">${escapeHtml(t(promptKey))}</td></tr>`;
+    return;
+  }
+
+  body.innerHTML = keysData.map((row) => {
+    const rows = [`
+    <tr class="key-row" data-key="${escapeHtml(row.key)}">
+      <td class="dim" style="font-family: var(--font-mono);">${escapeHtml(row.key)}</td>
+      <td>${row.inL1 ? escapeHtml(t("keys.yes")) : escapeHtml(t("keys.no"))}</td>
+      <td>${formatKeyTtl(row.ttl)}</td>
+    </tr>`];
+
+    if (keysExpandedKey === row.key) {
+      const cached = keysValueCache[row.key];
+      rows.push(`
+      <tr class="detail-row">
+        <td colspan="3">
+          ${cached ? renderKeyDetail(cached) : `<span class="dim">${escapeHtml(t("keys.detail.loading"))}</span>`}
+        </td>
+      </tr>`);
+    }
+    return rows.join("");
+  }).join("");
+
+  body.querySelectorAll("tr.key-row").forEach((row) => {
+    row.addEventListener("click", () => {
+      const key = row.dataset.key;
+      if (keysExpandedKey === key) {
+        keysExpandedKey = null;
+        renderKeysTable();
+        return;
+      }
+      keysExpandedKey = key;
+      renderKeysTable();
+      if (!keysValueCache[key]) {
+        loadKeyValue(key);
+      }
+    });
+  });
+}
+
+async function loadKeyValue(key) {
+  try {
+    const res = await authorizedFetch(`/api/keys/value?key=${encodeURIComponent(key)}`);
+    keysValueCache[key] = res;
+    if (keysExpandedKey === key) renderKeysTable();
+  } catch (err) {
+    if (err.message !== "Unauthorized") {
+      console.error("Key değeri alınamadı:", err);
+    }
+  }
+}
+
+function renderKeyDetail(data) {
+  const sourceClass = data.source === "L1" ? "l1" : data.source === "L2" ? "l2" : "miss";
+  const sourceLabel = data.source === "L1" ? t("keys.source.l1")
+      : data.source === "L2" ? t("keys.source.l2")
+          : t("keys.source.miss");
+
+  let prettyJson = data.value;
+  if (prettyJson != null) {
+    try {
+      prettyJson = JSON.stringify(JSON.parse(data.value), null, 2);
+    } catch (e) {
+      // JSON değilse ham metni olduğu gibi göster
+    }
+  }
+
+  return `
+    <div class="detail-grid" style="margin-bottom: 8px;">
+      <div class="detail-item"><div class="k">${escapeHtml(t("keys.detail.source"))}</div><div class="v"><span class="source-badge ${sourceClass}">${escapeHtml(sourceLabel)}</span></div></div>
+      <div class="detail-item"><div class="k">${escapeHtml(t("keys.detail.ttl"))}</div><div class="v">${formatKeyTtl(data.ttl)}</div></div>
+    </div>
+    <div class="k" style="font-size: 11px; color: var(--ink-faint); font-family: var(--font-body); margin-bottom: 2px;">${escapeHtml(t("keys.detail.value"))}</div>
+    <div class="key-detail-json">${escapeHtml(prettyJson ?? "null")}</div>
+  `;
+}
+
+function formatKeyTtl(seconds) {
+  const n = Number(seconds);
+  if (n === -2) return escapeHtml(t("keys.ttl.missing"));
+  if (n === -1) return escapeHtml(t("keys.ttl.none"));
+  return formatTTL(n);
 }
 
 function formatTTL(seconds) {

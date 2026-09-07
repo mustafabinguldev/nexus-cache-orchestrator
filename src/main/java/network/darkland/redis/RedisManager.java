@@ -7,8 +7,10 @@ import network.darkland.resilience.ResilienceExecutor;
 import redis.clients.jedis.*;
 import redis.clients.jedis.exceptions.JedisDataException;
 import redis.clients.jedis.params.SetParams;
+import redis.clients.jedis.params.ScanParams;
 import redis.clients.jedis.params.XAutoClaimParams;
 import redis.clients.jedis.params.XReadGroupParams;
+import redis.clients.jedis.resps.ScanResult;
 import redis.clients.jedis.resps.StreamEntry;
 
 import java.net.InetAddress;
@@ -328,7 +330,7 @@ public class RedisManager {
                         return Optional.ofNullable(jedis.get(key));
                     }
                 },
-                Optional::empty // fallback: cache miss gibi davran, Mongo'ya düşsün
+                Optional::empty
         );
     }
 
@@ -342,7 +344,39 @@ public class RedisManager {
                         return jedis.exists(key);
                     }
                 },
-                () -> false // fallback: yok say, Mongo'dan doğrulansın
+                () -> false
+        );
+    }
+
+    public long ttl(String key) {
+        return ResilienceExecutor.decorateSync(
+                resilience.redisCircuitBreaker(),
+                resilience.redisRetry(),
+                "TTL " + key,
+                () -> {
+                    try (Jedis jedis = pool.getResource()) {
+                        return jedis.ttl(key);
+                    }
+                },
+                () -> -2L
+        );
+    }
+
+    public record ScanKeysResult(String cursor, List<String> keys) {}
+
+    public ScanKeysResult scanKeys(String pattern, String cursor, int count) {
+        return ResilienceExecutor.decorateSync(
+                resilience.redisCircuitBreaker(),
+                resilience.redisRetry(),
+                "SCAN " + pattern,
+                () -> {
+                    try (Jedis jedis = pool.getResource()) {
+                        ScanParams params = new ScanParams().match(pattern).count(count);
+                        ScanResult<String> result = jedis.scan(cursor, params);
+                        return new ScanKeysResult(result.getCursor(), result.getResult());
+                    }
+                },
+                () -> new ScanKeysResult("0", List.of())
         );
     }
 

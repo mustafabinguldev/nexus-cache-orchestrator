@@ -16,6 +16,10 @@ public final class L1InvalidationBus {
     private static final boolean CLUSTER_MODE = Boolean.parseBoolean(
             System.getenv().getOrDefault("NEXUS_CLUSTER_MODE", "false"));
 
+    public static boolean isClusterModeEnabled() {
+        return CLUSTER_MODE;
+    }
+
     private final String nodeId = UUID.randomUUID().toString();
     private final RemoveCallback removeCallback;
 
@@ -38,7 +42,6 @@ public final class L1InvalidationBus {
                     jedis.subscribe(new JedisPubSub() {
                         @Override
                         public void onMessage(String channel, String message) {
-                            // format: "{senderNodeId}|{key}"
                             int sep = message.indexOf('|');
                             if (sep < 0) return;
 
@@ -52,7 +55,7 @@ public final class L1InvalidationBus {
                         }
                     }, CHANNEL);
                 } catch (Exception e) {
-                    LOGGER.warning("[L1InvalidationBus] Subscription connection lost; will retry in 5 seconds: " + e.getMessage());
+                    LOGGER.warning("[L1InvalidationBus] Subscription lost; will retry in 5 seconds: " + e.getMessage());
                     try {
                         Thread.sleep(5000);
                     } catch (InterruptedException ie) {
@@ -63,7 +66,6 @@ public final class L1InvalidationBus {
             }
         }, "Nexus-L1-Invalidation-Bus").start();
     }
-
     public void publishInvalidation(String key) {
         if (!CLUSTER_MODE) return;
         RedisManager rm = NexusApplication.getApplication().getRedisManager();
