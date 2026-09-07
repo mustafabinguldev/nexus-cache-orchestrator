@@ -350,7 +350,7 @@ A detailed change history compiled from the project's published GitHub releases:
 
 ### Prerequisites
 
-* Java 17+
+* Java 21+
 * A running Redis instance (`redis-server`)
 * A running MongoDB instance (`mongod`)
 
