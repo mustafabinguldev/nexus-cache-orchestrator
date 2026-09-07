@@ -2,6 +2,8 @@
 
 > *"The central brain between your distributed Game Server infrastructure and persistent data layer."*
 
+📄 **For a detailed breakdown of milestones and task tracking, view our full [ROADMAP.md](./ROADMAP.md).**
+
 ---
 ## 📖 Table of Contents
 
