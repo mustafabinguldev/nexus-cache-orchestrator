@@ -44,7 +44,7 @@ public class NexusReceiver {
         try {
             NexusJsonDataContainer dataContainer = new NexusJsonDataContainer(message);
 
-            if (!VALIDATION_CHAIN.runAll(dataContainer)) {
+            if (!redisManager.validateDelivery(message, () -> VALIDATION_CHAIN.runAll(dataContainer))) {
                 return;
             }
 
@@ -110,8 +110,7 @@ public class NexusReceiver {
                     .getAddonById(protocolId);
 
             if (addonOpt.isEmpty()) {
-                LOGGER.fine("No addon found for protocol ID: " + protocolId);
-                return;
+                throw new IllegalStateException("No addon available for protocol ID: " + protocolId);
             }
 
             DataAddon addon = addonOpt.get();
@@ -131,6 +130,7 @@ public class NexusReceiver {
             LOGGER.log(Level.SEVERE, "JSON processing error: " + e.getMessage(), e);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "Unexpected error while handling sync message: " + e.getMessage(), e);
+            throw new IllegalStateException("Message processing failed", e);
         }
     }
 

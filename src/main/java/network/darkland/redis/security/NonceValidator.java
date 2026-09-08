@@ -1,6 +1,7 @@
 package network.darkland.redis.security;
 
 import network.darkland.protocol.NexusJsonDataContainer;
+import network.darkland.redis.RedisManager;
 
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,7 +13,8 @@ public class NonceValidator implements MessageValidator {
 
     private static final String FIELD_NONCE = "nonce";
 
-    private final Map<String, Long> usedNonces = new ConcurrentHashMap<>();
+    private record Seen(long time, String deliveryId) {}
+    private final Map<String, Seen> usedNonces = new ConcurrentHashMap<>();
 
     private final ScheduledExecutorService cleanupScheduler =
             Executors.newSingleThreadScheduledExecutor(r -> {
@@ -28,7 +30,7 @@ public class NonceValidator implements MessageValidator {
 
     private void cleanupExpired() {
         long expirationTime = System.currentTimeMillis() - NexusSecurityConfig.TIMESTAMP_WINDOW_MILLIS;
-        usedNonces.entrySet().removeIf(entry -> entry.getValue() < expirationTime);
+        usedNonces.entrySet().removeIf(entry -> entry.getValue().time() < expirationTime);
     }
 
     @Override
@@ -43,8 +45,9 @@ public class NonceValidator implements MessageValidator {
                 return ValidationResult.reject("nonce is empty");
             }
 
-            Long previous = usedNonces.putIfAbsent(nonce, System.currentTimeMillis());
-            if (previous != null) {
+            String deliveryId = RedisManager.currentDeliveryId();
+            Seen previous = usedNonces.putIfAbsent(nonce, new Seen(System.currentTimeMillis(), deliveryId));
+            if (previous != null && (deliveryId == null || !deliveryId.equals(previous.deliveryId()))) {
                 return ValidationResult.reject("nonce reused: " + nonce);
             }
             return ValidationResult.ok();

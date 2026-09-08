@@ -74,12 +74,14 @@ public final class IncrementDataHandler implements RequestHandler {
                     dataModel.setValueJson(updatedJson);
 
                     app.getRedisManager().setData(dataModel.getKey(), updatedJson, dataModel.getAddon());
+                    app.getDataContainer().broadcastRemoteInvalidation(dataModel.getKey());
 
                     addon.pushMetrics(new NexusJsonDataContainer(updatedJson));
                 }
 
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[IncrementDataHandler/" + addon.addonName() + "] error:", e);
+                throw new IllegalStateException("INCREMENT_DATA failed", e);
             } finally {
                 if (lockKey != null && lock != null) {
                     addon.releaseKeyLock(lockKey, lock);

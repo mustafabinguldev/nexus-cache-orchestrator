@@ -49,7 +49,7 @@ public class NexusApplication {
 
         ResilienceConfig resilienceConfig = new ResilienceConfig();
 
-        this.redisManager    = new RedisManager(this, redisHost, redisPort, redisUser, redisPass, resilienceConfig);
+        this.redisManager    = new RedisManager(this, redisHost, redisPort, redisUser, redisPass, resilienceConfig, false);
         this.protocolHandler = new ProtocolHandler();
         this.dataContainer   = new RedisDataContainer();
         this.mongoManager    = new MongoManager(mongoUri, redisManager.getMongoExecutor(), resilienceConfig);
@@ -90,6 +90,8 @@ public class NexusApplication {
         this.influxDBManager = isMetricsEnabled
                 ? new InfluxDBManager(influxUrl, influxToken.toCharArray(), influxOrg, influxBucket)
                 : null;
+
+        this.redisManager.startInbound();
 
         // Uygulama kapanırken InfluxDB buffer'ının düzgün flush edilmesi için.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {

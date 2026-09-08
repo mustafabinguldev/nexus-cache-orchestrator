@@ -237,7 +237,7 @@ A new security layer providing **message integrity and replay attack protection*
 * Every packet is signed by the sender using **HmacSHA256** with a shared secret key (`NEXUS_SIGNING_KEY`), and the signature is stored in the `sig` field as Base64.
 * Nexus Core recalculates the expected signature from the remaining packet contents, excluding the `sig` field, and compares it against the received signature.
 * If the signatures do not match, the packet is **rejected immediately** and the event is logged at warning level.
-* If the `NEXUS_SIGNING_KEY` environment variable is not defined, the system **disables signature verification** and logs a warning only once. This behavior is acceptable only during migration/development; **the key must always be configured in production.**
+* If `NEXUS_SIGNING_KEY` is missing, incoming messages are **rejected by default**. Configure the same secret on Core and its clients. For an isolated development/migration environment only, `NEXUS_ALLOW_UNSIGNED_MESSAGES=true` explicitly enables the legacy unsigned mode; timestamp and nonce checks still apply. Docker Compose forwards both variables.
 
 ### 2) Timestamp Validation
 
@@ -658,7 +658,8 @@ Configuration is entered through the startup interface. There is intentionally n
 | `REDIS HOST`        | `127.0.0.1`                      | Host/IP address of your Redis server. Port defaults to `6379`.            |
 | `MONGO URI`         | `mongodb://user:pass@host:27017` | Full MongoDB connection string. Supports authentication and replica sets. |
 | `SERVER PORT`       | `8080`                           | Port used by Nexus Core for internal HTTP health checks.                  |
-| `NEXUS_SIGNING_KEY` | *(environment variable)*         | Shared secret used for HMAC packet signing. **Required in production.**   |
+| `NEXUS_SIGNING_KEY` | *(environment variable)*         | Shared HMAC key on Core and clients. Incoming messages are rejected without it by default. |
+| `NEXUS_ALLOW_UNSIGNED_MESSAGES` | `false` | Explicit legacy unsigned mode for isolated development/migration only. |
 
 ---
 
@@ -699,7 +700,17 @@ The entire purpose of Nexus Core is centralized data access. Bypassing it breaks
 
 ### 6. Always define `NEXUS_SIGNING_KEY` in production
 
-When the key is not configured, signature verification is disabled and the network becomes vulnerable to forged or replayed packets. Never hardcode the key in source code or version control; deploy it through a secrets manager or environment variable.
+When the key is not configured, incoming packets are rejected unless unsigned mode was explicitly enabled. Never hardcode the key in source code or version control; deploy it through a secrets manager or environment variable.
+
+### Runtime regression tests and delivery completion
+
+See [diagnostics/README.md](diagnostics/README.md) for the live Redis/MongoDB regression tests and HTTP checks.
+
+The message envelope, request types and existing handler method signatures are unchanged. A stream ACK now waits for tasks submitted through `RedisManager.processTask` / `processMongoTask` and their pending MongoDB writes. Addon handlers must submit asynchronous work through these methods, wait for any external futures inside the submitted task, and propagate failures. Arbitrary detached threads/executors cannot be tracked automatically.
+
+`setData` and `deleteData` now finish their Redis command before returning and propagate exhausted retries. This keeps mutations inside per-key locks ordered. Pending write snapshots are independent of L1 and survive cache expiry/eviction in the running process. Direct addon mutations outside a stream request still use the background flush; they do not receive a stream durability guarantee.
+
+Delivery remains **at least once**, not exactly once: a process crash after a side effect but before the completion receipt can replay a mutation. Same-process retries after a completed handler's Mongo flush failure do not re-run that handler. Multi-node atomic increments and cross-process idempotency still require a separate design.
 
 ### 7. Keep system clocks synchronized (NTP)
 

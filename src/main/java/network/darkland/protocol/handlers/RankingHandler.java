@@ -18,9 +18,8 @@ public final class RankingHandler implements RequestHandler {
         int    limit = json.get("limit", Integer.class);
 
         NexusApplication app = NexusApplication.getApplication();
-        app.getRedisManager().processTask(() ->
-                app.getMongoManager().getRanking(addon, field, order, limit)
-                        .thenAccept(rankingMap -> {
+        app.getRedisManager().processTask(() -> {
+                            var rankingMap = app.getMongoManager().getRanking(addon, field, order, limit).join();
                             NexusJsonDataContainer response = new NexusJsonDataContainer();
                             response.set("protocol", addon.addonId());
                             response.set("type",     "RANKING_RESPONSE");
@@ -30,8 +29,6 @@ public final class RankingHandler implements RequestHandler {
                                     RedisManager.CHANNEL + "_" + source,
                                     MessageAuth.stamp(response.toFullJson())
                             );
-                        })
-                        .exceptionally(ex -> { ex.printStackTrace(); return null; })
-        );
+        });
     }
 }

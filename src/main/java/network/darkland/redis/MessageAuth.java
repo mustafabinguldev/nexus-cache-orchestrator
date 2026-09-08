@@ -17,28 +17,24 @@ public class MessageAuth {
     private static final Logger LOGGER = Logger.getLogger(MessageAuth.class.getName());
     private static final ObjectMapper MAPPER = new ObjectMapper();
 
-    private static volatile boolean warnedOnce = false;
-
     public static String stamp(String json) {
-        if (!NexusSecurityConfig.isSigningEnabled()) {
-            return json;
-        }
         try {
             Map<String, Object> canonical = new TreeMap<>(
                     MAPPER.readValue(json, new TypeReference<Map<String, Object>>() {})
             );
             canonical.put("timestamp", System.currentTimeMillis());
             canonical.put("nonce", UUID.randomUUID().toString());
+            canonical.remove("sig");
 
-            String unsigned = MAPPER.writeValueAsString(canonical); // artık alfabetik sıralı
-            String sig = HmacSigner.sign(unsigned, NexusSecurityConfig.SHARED_SECRET);
-
-            canonical.put("sig", sig);
+            if (NexusSecurityConfig.isSigningEnabled()) {
+                String unsigned = MAPPER.writeValueAsString(canonical);
+                canonical.put("sig", HmacSigner.sign(unsigned, NexusSecurityConfig.SHARED_SECRET));
+            }
             return MAPPER.writeValueAsString(canonical);
 
         } catch (Exception e) {
-            LOGGER.warning("The outgoing message could not be signed; it is being sent unsigned.: " + e.getMessage());
-            return json;
+            LOGGER.warning("Could not stamp outgoing message: " + e.getMessage());
+            throw new IllegalStateException("Could not stamp outgoing message", e);
         }
     }
 

@@ -7,7 +7,7 @@ public class DataModel {
 
     private String key;
     private String id;
-    private String valueJson;
+    private volatile String valueJson;
 
     private DataAddon addon;
 
@@ -36,9 +36,9 @@ public class DataModel {
         return valueJson;
     }
 
-    public void setValueJson(String valueJson) {
+    public synchronized void setValueJson(String valueJson) {
         this.valueJson = valueJson;
-        NexusApplication.getApplication().getDataContainer().getDirtyKeys().add(getKey());
+        NexusApplication.getApplication().getDataContainer().markDirty(this);
     }
 
     public String getId() {

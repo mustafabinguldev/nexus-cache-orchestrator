@@ -18,9 +18,8 @@ public final class RankFinderHandler implements RequestHandler {
         String order = json.get("order", String.class);
 
         NexusApplication app = NexusApplication.getApplication();
-        app.getRedisManager().processTask(() ->
-                app.getMongoManager().getPosition(addon, key, field, order)
-                        .thenAccept(position -> {
+        app.getRedisManager().processTask(() -> {
+                            var position = app.getMongoManager().getPosition(addon, key, field, order).join();
                             NexusJsonDataContainer response = new NexusJsonDataContainer();
                             response.set("protocol", addon.addonId());
                             response.set("type",     "RANK_FINDER_RESPONSE");
@@ -31,7 +30,6 @@ public final class RankFinderHandler implements RequestHandler {
                                     RedisManager.CHANNEL + "_" + source,
                                     MessageAuth.stamp(response.toFullJson())
                             );
-                        })
-        );
+        });
     }
 }

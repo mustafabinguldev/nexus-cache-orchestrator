@@ -61,9 +61,8 @@ public final class ResilienceExecutor {
             String label,
             Runnable runnable
     ) {
-        decorateSync(circuitBreaker, retry, label, () -> {
-            runnable.run();
-            return null;
-        }, () -> null);
+        // A failed write must reach the request tracker; otherwise it could acknowledge lost work.
+        Runnable withBreaker = CircuitBreaker.decorateRunnable(circuitBreaker, runnable);
+        Retry.decorateRunnable(retry, withBreaker).run();
     }
 }

@@ -4,6 +4,8 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import network.darkland.protocol.NexusJsonDataContainer;
 
 import java.util.logging.Logger;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 public class SignatureValidator implements MessageValidator {
 
@@ -15,6 +17,9 @@ public class SignatureValidator implements MessageValidator {
     @Override
     public ValidationResult validate(NexusJsonDataContainer message) {
         if (!NexusSecurityConfig.isSigningEnabled()) {
+            if (!NexusSecurityConfig.ALLOW_UNSIGNED_MESSAGES) {
+                return ValidationResult.reject("NEXUS_SIGNING_KEY is not configured; unsigned messages are disabled");
+            }
             if (!warnedOnce) {
                 warnedOnce = true;
                 LOGGER.warning("NEXUS_SIGNING_KEY is not set — signature verification is DISABLED. "
@@ -35,7 +40,8 @@ public class SignatureValidator implements MessageValidator {
 
             String expectedSig = HmacSigner.sign(withoutSig.toFullJson(), NexusSecurityConfig.SHARED_SECRET);
 
-            if (!expectedSig.equals(providedSig)) {
+            if (providedSig == null || !MessageDigest.isEqual(
+                    expectedSig.getBytes(StandardCharsets.UTF_8), providedSig.getBytes(StandardCharsets.UTF_8))) {
                 return ValidationResult.reject("Signature does not match (key might be incorrect or outdated)");
             }
             return ValidationResult.ok();

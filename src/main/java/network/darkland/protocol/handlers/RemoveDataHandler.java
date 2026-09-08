@@ -15,7 +15,7 @@ public final class RemoveDataHandler implements RequestHandler {
     @Override
     public void handle(DataAddon addon, String source, NexusJsonDataContainer json) {
         NexusApplication app = NexusApplication.getApplication();
-        app.getRedisManager().processTask(() -> {
+        app.getRedisManager().processTask(() -> addon.withKeyLock(json, () -> {
             try {
                 String idFieldName = addon.getIdFieldName();
                 if (idFieldName.isEmpty() || !json.containsKey(idFieldName)) return;
@@ -27,15 +27,14 @@ public final class RemoveDataHandler implements RequestHandler {
                 addon.getData(json).ifPresent(dataModel -> {
                     app.getDataContainer().removeModel(dataModel.getKey());
                     if (allRemove) {
-                        app.getRedisManager().processMongoTask(() ->
-                                app.getMongoManager().removeValue(addon, specificId).join()
-                        );
+                        app.getMongoManager().removeValue(addon, specificId).join();
                     }
                 });
 
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[RemoveDataHandler/" + addon.addonName() + "] hata", e);
+                throw new IllegalStateException("REMOVE_DATA failed", e);
             }
-        });
+        }));
     }
 }

@@ -54,6 +54,8 @@ services:
       REDIS_HOST: redis
       MONGO_URI: mongodb://${MONGO_ROOT_USER:-nexus}:${MONGO_ROOT_PASSWORD:-nexus_pw}@mongo:27017
       SERVER_PORT: 8080
+      NEXUS_SIGNING_KEY: ${NEXUS_SIGNING_KEY:-}
+      NEXUS_ALLOW_UNSIGNED_MESSAGES: ${NEXUS_ALLOW_UNSIGNED_MESSAGES:-false}
       VNC_PASSWORD: "examplepassword"
 
 volumes:

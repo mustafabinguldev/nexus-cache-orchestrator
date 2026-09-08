@@ -18,7 +18,7 @@ public final class SetDataHandler implements RequestHandler {
     @Override
     public void handle(DataAddon addon, String source, NexusJsonDataContainer json) {
         NexusApplication app = NexusApplication.getApplication();
-        app.getRedisManager().processTask(() -> {
+        app.getRedisManager().processTask(() -> addon.withKeyLock(json, () -> {
             try {
                 String rawInput = json.containsKey("data")
                         ? JsonUtils.toJson(json.get("data", Object.class))
@@ -49,7 +49,8 @@ public final class SetDataHandler implements RequestHandler {
 
             } catch (Exception e) {
                 LOGGER.log(Level.SEVERE, "[SetDataHandler/" + addon.addonName() + "] error:", e);
+                throw new IllegalStateException("SET_DATA failed", e);
             }
-        });
+        }));
     }
 }

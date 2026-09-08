@@ -15,10 +15,9 @@ public class TimestampValidator implements MessageValidator {
         try {
             long timestamp = message.get(FIELD_TIMESTAMP, Long.class);
             long now = System.currentTimeMillis();
-            long difference = Math.abs(now - timestamp);
-
-            if (difference > NexusSecurityConfig.TIMESTAMP_WINDOW_MILLIS) {
-                return ValidationResult.reject("timestamp outside the window (difference: " + difference + " ms)");
+            long window = NexusSecurityConfig.TIMESTAMP_WINDOW_MILLIS;
+            if (timestamp < now - window || timestamp > now + window) {
+                return ValidationResult.reject("timestamp outside the allowed window");
             }
             return ValidationResult.ok();
 

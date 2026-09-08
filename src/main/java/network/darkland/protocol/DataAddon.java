@@ -48,7 +48,10 @@ public abstract class DataAddon {
     private volatile Field[] cachedAnnotatedFields = null;
     private final Object fieldCacheLock = new Object();
 
-    private final ConcurrentHashMap<String, Object> keyLocks = new ConcurrentHashMap<>();
+    private static final class KeyLock {
+        int users;
+    }
+    private final ConcurrentHashMap<String, KeyLock> keyLocks = new ConcurrentHashMap<>();
 
     private volatile MessageValidationChain additionalValidationChain = null;
     private final Object validationChainLock = new Object();
@@ -85,6 +88,7 @@ public abstract class DataAddon {
             handler.handle(this, source, json);
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] The handler threw an error; type=" + type, e);
+            throw new IllegalStateException("Request handler failed", e);
         }
     }
 
@@ -121,11 +125,31 @@ public abstract class DataAddon {
     }
 
     public final Object acquireKeyLock(String keyValue) {
-        return keyLocks.computeIfAbsent(keyValue, k -> new Object());
+        return keyLocks.compute(keyValue, (key, current) -> {
+            KeyLock lock = current == null ? new KeyLock() : current;
+            lock.users++;
+            return lock;
+        });
     }
 
     public final void releaseKeyLock(String keyValue, Object lock) {
-        keyLocks.remove(keyValue, lock);
+        keyLocks.computeIfPresent(keyValue, (key, current) -> {
+            if (current != lock) return current;
+            return --current.users == 0 ? null : current;
+        });
+    }
+
+    public final void withKeyLock(NexusJsonDataContainer json, Runnable task) {
+        NexusJsonDataContainer data = json;
+        try {
+            if (json.containsKey("data")) {
+                data = new NexusJsonDataContainer(network.darkland.util.JsonUtils.toJson(json.get("data", Object.class)));
+            }
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) { throw new IllegalArgumentException(e); }
+        String key = getSpecificDbKeyFromJsonKeyToValue(data);
+        Object lock = acquireKeyLock(key);
+        try { synchronized (lock) { task.run(); } }
+        finally { releaseKeyLock(key, lock); }
     }
 
     public void pushMetrics(NexusJsonDataContainer currentData) {
@@ -307,6 +331,9 @@ public abstract class DataAddon {
             NexusApplication app    = NexusApplication.getApplication();
             var              redis  = app.getRedisManager();
 
+            Optional<DataModel> pending = app.getDataContainer().getPendingModel(keyTag);
+            if (pending.isPresent()) return pending;
+
             Optional<DataModel> l1 = app.getDataContainer().getDataModelFromKey(keyTag);
             if (l1.isPresent()) {
                 CacheMetrics.get().recordL1Hit(cacheKeyHeaderTag());
@@ -325,7 +352,7 @@ public abstract class DataAddon {
                     CacheMetrics.get().recordL2Hit(cacheKeyHeaderTag());
                     DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
                             modelInitComp(redisJson), this, specificValue);
-                    app.getDataContainer().addModelFix(keyTag, m);
+                    app.getDataContainer().cacheModel(keyTag, m);
                     pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
                     return Optional.of(m);
                 }
@@ -336,13 +363,14 @@ public abstract class DataAddon {
                 CacheMetrics.get().recordL3Hit(cacheKeyHeaderTag());
                 DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),
                         modelInitComp(dbJson), this, specificValue);
-                app.getDataContainer().addModel(keyTag, m);
+                app.getDataContainer().cacheModel(keyTag, m);
                 pushMetrics(new NexusJsonDataContainer(m.getValueJson()));
                 return Optional.of(m);
             }
 
         } catch (Exception e) {
             LOGGER.log(Level.SEVERE, "[DataAddon/" + addonName() + "] getData error", e);
+            throw new IllegalStateException("Data lookup failed; the record may still exist", e);
         }
         return Optional.empty();
     }

@@ -16,6 +16,10 @@ import redis.clients.jedis.resps.StreamEntry;
 import java.net.InetAddress;
 import java.util.*;
 import java.util.concurrent.*;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
 
 public class RedisManager {
 
@@ -25,6 +29,12 @@ public class RedisManager {
     private final ResilienceConfig resilience;
 
     private final BlockingQueue<PendingMessage> messageQueue = new LinkedBlockingQueue<>(50000);
+    private final Set<StreamEntryID> inFlight = ConcurrentHashMap.newKeySet();
+    private final Map<StreamEntryID, Set<String>> completedTasks = new ConcurrentHashMap<>();
+    private final List<Thread> inboundWorkers = new CopyOnWriteArrayList<>();
+    private final AtomicBoolean inboundStarted = new AtomicBoolean();
+    private final AtomicBoolean consumerStarted = new AtomicBoolean();
+    private static final String RECEIPTS = "darkland_nexus_delivery_receipts";
 
     private final ExecutorService mongoExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
@@ -60,6 +70,11 @@ public class RedisManager {
 
     public RedisManager(NexusApplication application, String redisHost, int redisPort,
                         String redisUser, String redisPass, ResilienceConfig resilience) {
+        this(application, redisHost, redisPort, redisUser, redisPass, resilience, true);
+    }
+
+    public RedisManager(NexusApplication application, String redisHost, int redisPort,
+                        String redisUser, String redisPass, ResilienceConfig resilience, boolean autoStart) {
         this.application = application;
         this.redisHost = redisHost;
         this.redisPort = redisPort;
@@ -70,9 +85,7 @@ public class RedisManager {
 
         this.connect();
 
-        this.startInboundWorkers();
-        this.startStreamConsumer();
-        this.startClaimSweeper();
+        if (autoStart) startInbound();
 
 
         System.out.println("Nexus: System initialized with virtual-thread task execution.");
@@ -102,25 +115,60 @@ public class RedisManager {
                 CLAIM_SWEEP_INTERVAL_SECONDS, CLAIM_SWEEP_INTERVAL_SECONDS, TimeUnit.SECONDS);
     }
 
+    public void startInbound() {
+        if (!inboundStarted.compareAndSet(false, true)) return;
+        startInboundWorkers();
+        startStreamConsumer();
+        startClaimSweeper();
+    }
+
     private void startInboundWorkers() {
         int cores = Runtime.getRuntime().availableProcessors();
         for (int i = 0; i < cores; i++) {
-            new Thread(() -> {
+            Thread worker = new Thread(() -> {
                 NexusReceiver receiver = new NexusReceiver(this);
                 while (!Thread.currentThread().isInterrupted()) {
                     try {
                         PendingMessage pending = messageQueue.take();
+                        RequestExecution execution = new RequestExecution(pending.id().toString());
                         try {
-                            receiver.handleSyncMessage(pending.payload());
-                        } finally {
+                            if (!hasReceipt(pending, "done:")) {
+                                Set<String> writes = completedTasks.get(pending.id());
+                                if (writes == null) {
+                                    RequestExecution.CURRENT.set(execution);
+                                    try { receiver.handleSyncMessage(pending.payload()); }
+                                    catch (Throwable error) { execution.fail(error); }
+                                    finally {
+                                        RequestExecution.CURRENT.remove();
+                                        execution.finish();
+                                    }
+                                    execution.await();
+                                    writes = Set.copyOf(execution.dirtyKeys);
+                                    // A flush retry must not execute an already-applied increment again.
+                                    completedTasks.put(pending.id(), writes);
+                                }
+                                for (String key : writes) application.getDataContainer().flushKey(key);
+                                saveReceipt(pending, "done:");
+                            }
                             acknowledge(pending.id());
+                            completedTasks.remove(pending.id());
+                        } catch (InterruptedException e) {
+                            Thread.currentThread().interrupt();
+                            return;
+                        } catch (Exception e) {
+                            System.err.println("Nexus: Delivery remains pending: " + pending.id() + " - " + e.getMessage());
+                        } finally {
+                            RequestExecution.CURRENT.remove();
+                            inFlight.remove(pending.id());
                         }
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         break;
                     }
                 }
-            }, "Nexus-Inbound-Worker-" + i).start();
+            }, "Nexus-Inbound-Worker-" + i);
+            inboundWorkers.add(worker);
+            worker.start();
         }
     }
 
@@ -157,6 +205,7 @@ public class RedisManager {
 
 
     public void startStreamConsumer() {
+        if (!consumerStarted.compareAndSet(false, true)) return;
         scheduler.execute(() -> {
             ensureConsumerGroup();
             sweepIdlePendingEntries();
@@ -195,16 +244,12 @@ public class RedisManager {
     }
 
     public void acknowledge(StreamEntryID id) {
-        processTask(() -> {
-            try (Jedis jedis = pool.getResource()) {
-                Pipeline pipeline = jedis.pipelined();
-                pipeline.xack(STREAM_KEY, CONSUMER_GROUP, id);
-                pipeline.xdel(STREAM_KEY, id);
-                pipeline.sync();
-            } catch (Exception e) {
-                System.err.println("Nexus Error [XACK/XDEL]: " + id + " — " + e.getMessage());
-            }
-        });
+        try (Jedis jedis = pool.getResource()) {
+            jedis.eval("redis.call('XACK', KEYS[1], ARGV[1], ARGV[2]); "
+                            + "redis.call('XDEL', KEYS[1], ARGV[2]); "
+                            + "redis.call('HDEL', KEYS[2], ARGV[2]); return 1",
+                    List.of(STREAM_KEY, RECEIPTS), List.of(CONSUMER_GROUP, id.toString()));
+        }
     }
 
 
@@ -218,17 +263,67 @@ public class RedisManager {
             return;
         }
 
+        if (!inFlight.add(entry.getID())) return;
         if (!messageQueue.offer(new RedisManager.PendingMessage(entry.getID(), payload))) {
+            inFlight.remove(entry.getID());
             System.err.println("Nexus: Inbound queue full, deferring entry " + entry.getID() + " to the next XAUTOCLAIM sweep.");
         }
     }
 
     public void processTask(Runnable task) {
-        outboundExecutor.execute(task);
+        submit(outboundExecutor, task);
     }
 
     public void processMongoTask(Runnable task) {
-        mongoExecutor.execute(task);
+        submit(mongoExecutor, task);
+    }
+
+    private void submit(ExecutorService executor, Runnable task) {
+        RequestExecution execution = RequestExecution.CURRENT.get();
+        if (execution == null) { executor.execute(task); return; }
+        Runnable tracked = execution.track(task);
+        try { executor.execute(tracked); }
+        catch (RuntimeException error) { execution.fail(error); execution.finish(); throw error; }
+    }
+
+    public static String currentDeliveryId() {
+        RequestExecution execution = RequestExecution.CURRENT.get();
+        return execution == null ? null : execution.deliveryId;
+    }
+
+    public void trackDirty(String key) {
+        RequestExecution execution = RequestExecution.CURRENT.get();
+        if (execution != null) execution.dirtyKeys.add(key);
+    }
+
+    private static String digest(String payload) {
+        try {
+            return HexFormat.of().formatHex(MessageDigest.getInstance("SHA-256")
+                    .digest(payload.getBytes(StandardCharsets.UTF_8)));
+        } catch (java.security.NoSuchAlgorithmException e) { throw new IllegalStateException(e); }
+    }
+
+    private boolean hasReceipt(PendingMessage pending, String state) {
+        try (Jedis jedis = pool.getResource()) {
+            return (state + digest(pending.payload())).equals(jedis.hget(RECEIPTS, pending.id().toString()));
+        }
+    }
+
+    private void saveReceipt(PendingMessage pending, String state) {
+        try (Jedis jedis = pool.getResource()) {
+            jedis.hset(RECEIPTS, pending.id().toString(), state + digest(pending.payload()));
+        }
+    }
+
+    public boolean validateDelivery(String payload, BooleanSupplier validation) {
+        String id = currentDeliveryId();
+        if (id == null) return validation.getAsBoolean();
+        PendingMessage pending = new PendingMessage(new StreamEntryID(id), payload);
+        // Previously authenticated redeliveries remain valid after the timestamp window expires.
+        if (hasReceipt(pending, "validated:")) return true;
+        if (!validation.getAsBoolean()) return false;
+        saveReceipt(pending, "validated:");
+        return true;
     }
 
     public ExecutorService getMongoExecutor() {
@@ -276,7 +371,7 @@ public class RedisManager {
 
     private void ensureConsumerGroup() {
         try (Jedis jedis = pool.getResource()) {
-            jedis.xgroupCreate(STREAM_KEY, CONSUMER_GROUP, StreamEntryID.LAST_ENTRY, true);
+            jedis.xgroupCreate(STREAM_KEY, CONSUMER_GROUP, new StreamEntryID("0-0"), true);
             System.out.println("Nexus: Consumer group [" + CONSUMER_GROUP + "] ready on stream [" + STREAM_KEY + "].");
         } catch (JedisDataException e) {
             if (e.getMessage() != null && e.getMessage().contains("BUSYGROUP")) {
@@ -307,7 +402,7 @@ public class RedisManager {
     }
 
     public void setData(String key, String json, DataAddon addon) {
-        processTask(() -> ResilienceExecutor.decorateSyncVoid(
+        ResilienceExecutor.decorateSyncVoid(
                 resilience.redisCircuitBreaker(),
                 resilience.redisRetry(),
                 "SET " + key,
@@ -317,7 +412,7 @@ public class RedisManager {
                         jedis.set(key, json, params);
                     }
                 }
-        ));
+        );
     }
 
     public Optional<String> getData(String key) {
@@ -381,7 +476,7 @@ public class RedisManager {
     }
 
     public void deleteData(String key) {
-        processTask(() -> ResilienceExecutor.decorateSyncVoid(
+        ResilienceExecutor.decorateSyncVoid(
                 resilience.redisCircuitBreaker(),
                 resilience.redisRetry(),
                 "DEL " + key,
@@ -390,7 +485,7 @@ public class RedisManager {
                         jedis.del(key);
                     }
                 }
-        ));
+        );
     }
 
     public void publish(String channel, String message) {
@@ -407,7 +502,8 @@ public class RedisManager {
     }
 
     public void shutdown() {
-        scheduler.shutdown();
+        scheduler.shutdownNow();
+        inboundWorkers.forEach(Thread::interrupt);
         mongoExecutor.shutdown();
         outboundExecutor.shutdown();
         resilience.shutdown();
