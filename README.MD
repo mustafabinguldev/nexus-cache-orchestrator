@@ -1,6 +1,6 @@
 # Nexus Core
 
-**Shared data, caching, and messaging for distributed Minecraft servers.**
+**Shared data, caching, and messaging for distributed servers.**
 
 Nexus Core centralizes player and game data behind Redis messaging. Server plugins send requests; Core handles caching, MongoDB persistence, and responses through a common addon API.
 
