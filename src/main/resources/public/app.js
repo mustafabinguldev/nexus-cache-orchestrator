@@ -39,6 +39,10 @@ let eventLogEntries = []; // { level, key, params, ts }
 // ── i18n ──
 const translations = {
   tr: {
+    "design.login.title": "Tüm ağın. Tek merkezde.",
+    "design.login.description": "Önbelleğini izle, verilerini keşfet ve sunucu ağının nabzını tut.",
+    "design.dashboard.title": "Ağına genel bakış",
+    "design.dashboard.description": "Performans, veriler ve sistem hareketleri tek bir yerde.",
     "doc.title": "Nexus Cache Orchestrator — Panel",
     "app.subtitle": "cache orchestrator / panel",
     "login.username": "Kullanıcı adı",
@@ -134,6 +138,10 @@ const translations = {
     "footer.shortcut.refresh": "yenile",
   },
   en: {
+    "design.login.title": "Your network. One command center.",
+    "design.login.description": "Monitor your cache, explore your data, and keep a pulse on your server network.",
+    "design.dashboard.title": "Network overview",
+    "design.dashboard.description": "Performance, data, and system activity in one place.",
     "doc.title": "Nexus Cache Orchestrator — Dashboard",
     "app.subtitle": "cache orchestrator / dashboard",
     "login.username": "Username",

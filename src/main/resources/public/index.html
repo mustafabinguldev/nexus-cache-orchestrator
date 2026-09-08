@@ -9,6 +9,16 @@
 <body>
 
 <section id="login-screen" class="screen">
+  <div class="login-intro">
+    <p class="eyebrow">DARKLAND / NEXUS CORE</p>
+    <h2 data-i18n="design.login.title">Tüm ağın. Tek merkezde.</h2>
+    <p data-i18n="design.login.description">Önbelleğini izle, verilerini keşfet ve sunucu ağının nabzını tut.</p>
+    <div class="architecture" aria-hidden="true">
+      <span><b>01 / MEMORY</b>Caffeine</span><i>→</i>
+      <span><b>02 / CACHE</b>Redis</span><i>→</i>
+      <span><b>03 / STORAGE</b>MongoDB</span>
+    </div>
+  </div>
   <div class="login-card">
     <div class="lang-switch" id="lang-switch-login">
       <button type="button" class="lang-btn" data-lang="tr">TR</button>
@@ -63,6 +73,14 @@
   </header>
 
   <main>
+    <div class="dashboard-heading">
+      <div>
+        <p class="eyebrow">NEXUS / CONTROL CENTER</p>
+        <h1 data-i18n="design.dashboard.title">Ağına genel bakış</h1>
+        <p data-i18n="design.dashboard.description">Performans, veriler ve sistem hareketleri tek bir yerde.</p>
+      </div>
+      <span class="section-index">01 — OVERVIEW</span>
+    </div>
     <div class="stat-grid">
       <div class="stat-card">
         <div class="stat-top">
@@ -105,11 +123,11 @@
     </div>
 
     <section class="panel">
-      <div class="section-head" style="padding: 16px 16px 0;">
-        <h2><span data-i18n="cache.title">Cache Performansı (L1 / L2 / L3)</span></h2>
+      <div class="section-head">
+        <h2 id="cache-heading"><span data-i18n="cache.title">Cache Performansı (L1 / L2 / L3)</span></h2>
       </div>
-      <div style="padding: 16px;"></div>
-      <table id="cache-table">
+
+      <div class="table-scroll" tabindex="0" role="region" aria-labelledby="cache-heading"><table id="cache-table">
         <thead>
         <tr>
           <th data-i18n="cache.th.region">Eklenti</th>
@@ -122,21 +140,21 @@
         <tbody id="cache-body">
         <tr><td colspan="5" class="dim empty-cell" data-i18n="addons.loading">Yükleniyor…</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section class="panel">
-      <div class="section-head" style="padding: 16px 16px 0;">
-        <h2><span data-i18n="keys.title">Key Gezgini</span></h2>
+      <div class="section-head">
+        <h2 id="keys-heading"><span data-i18n="keys.title">Key Gezgini</span></h2>
         <div class="section-tools">
-          <select id="keys-addon-select"></select>
+          <select id="keys-addon-select" aria-labelledby="keys-heading"></select>
           <button class="icon-btn" id="keys-load-btn">
             <span class="refresh-glyph">↻</span> <span data-i18n="keys.load">Anahtarları getir</span>
           </button>
         </div>
       </div>
-      <div style="padding: 16px;"></div>
-      <table id="keys-table">
+
+      <div class="table-scroll" tabindex="0" role="region" aria-labelledby="keys-heading"><table id="keys-table">
         <thead>
         <tr>
           <th data-i18n="keys.th.key">Key</th>
@@ -147,7 +165,7 @@
         <tbody id="keys-body">
         <tr><td colspan="3" class="dim empty-cell" data-i18n="keys.selectPrompt">Bir eklenti seçip anahtarları getirin.</td></tr>
         </tbody>
-      </table>
+      </table></div>
       <div style="padding: 12px 16px 16px;">
         <button class="icon-btn" id="keys-loadmore-btn" style="display:none;">
           <span data-i18n="keys.loadmore">Daha fazla yükle</span>
@@ -156,19 +174,19 @@
     </section>
 
     <section class="panel">
-      <div class="section-head" style="padding: 16px 16px 0;">
-        <h2><span data-i18n="addons.title">Eklentiler</span> <span class="count" id="addons-count"></span></h2>
+      <div class="section-head">
+        <h2 id="addons-heading"><span data-i18n="addons.title">Eklentiler</span> <span class="count" id="addons-count"></span></h2>
         <div class="section-tools">
           <div class="search-box">
-            <input type="text" id="addon-search" data-i18n-placeholder="addons.search.placeholder" placeholder="ara… ( / )" autocomplete="off">
+            <input type="text" id="addon-search" aria-labelledby="addons-heading" data-i18n-placeholder="addons.search.placeholder" placeholder="ara… ( / )" autocomplete="off">
           </div>
           <button class="icon-btn" id="refresh-btn">
             <span class="refresh-glyph">↻</span> <span data-i18n="addons.refresh">Yenile</span>
           </button>
         </div>
       </div>
-      <div style="padding: 16px;"></div>
-      <table id="addons-table">
+
+      <div class="table-scroll" tabindex="0" role="region" aria-labelledby="addons-heading"><table id="addons-table">
         <thead>
         <tr>
           <th data-key="id" data-i18n="addons.th.id">ID</th>
@@ -182,14 +200,14 @@
         <tbody id="addons-body">
         <tr><td colspan="6" class="dim empty-cell" data-i18n="addons.loading">Yükleniyor…</td></tr>
         </tbody>
-      </table>
+      </table></div>
     </section>
 
     <section class="panel">
-      <div class="section-head" style="padding: 16px 16px 0;">
+      <div class="section-head">
         <h2 data-i18n="log.title">Olay günlüğü</h2>
       </div>
-      <div style="padding: 8px 0 0;"></div>
+
       <div class="log-list" id="event-log"></div>
     </section>
   </main>
