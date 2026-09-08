@@ -6,7 +6,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
-/** Tracks tasks submitted through RedisManager without changing the addon handler API. */
 final class RequestExecution {
     static final ThreadLocal<RequestExecution> CURRENT = new ThreadLocal<>();
     final String deliveryId;
