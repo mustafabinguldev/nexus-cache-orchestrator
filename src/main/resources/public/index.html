@@ -122,7 +122,12 @@
 
     <section class="panel">
       <div class="section-head">
+        <div class="section-head">
         <h2 id="cache-heading"><span data-i18n="cache.title">Cache Performansı (L1 / L2 / L3)</span></h2>
+        <div class="section-tools">
+          <button class="icon-btn" id="export-cache-csv">CSV Dışa Aktar</button>
+        </div>
+      </div>
       </div>
 
       <div class="table-scroll" tabindex="0" role="region" aria-labelledby="cache-heading"><table id="cache-table">
@@ -181,8 +186,9 @@
           <button class="icon-btn" id="refresh-btn">
             <span class="refresh-glyph">↻</span> <span data-i18n="addons.refresh">Yenile</span>
           </button>
-        </div>
-      </div>
+                <button class="icon-btn" id="export-addons-csv">CSV Dışa Aktar</button>
+              </div>
+            </div>
 
       <div class="table-scroll" tabindex="0" role="region" aria-labelledby="addons-heading"><table id="addons-table">
         <thead>

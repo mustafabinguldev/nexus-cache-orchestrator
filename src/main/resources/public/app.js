@@ -438,7 +438,65 @@ function showDashboard() {
   fetchAll();
   startPolling();
   startClock();
+  initEventStream();
 }
+
+// ── Server-Sent Events (real-time) ──
+let eventSource = null;
+function initEventStream() {
+  if (!window.EventSource) return; // fallback: keep polling
+  try {
+    if (eventSource) {
+      eventSource.close();
+      eventSource = null;
+    }
+    eventSource = new EventSource(`${API}/api/stream/stats`, { withCredentials: true });
+
+    eventSource.addEventListener('stats', (ev) => {
+      try {
+        const payload = JSON.parse(ev.data);
+        if (payload) {
+          applyStats(payload);
+          if (payload.regions) {
+            cacheMetricsData = payload.regions || [];
+            renderCacheMetrics();
+          }
+        }
+      } catch (e) { console.error('SSE parse error', e); }
+    });
+
+    eventSource.onerror = (e) => {
+      console.warn('SSE connection error, falling back to polling', e);
+      if (eventSource) { eventSource.close(); eventSource = null; }
+    };
+  } catch (e) {
+    console.warn('SSE init failed', e);
+  }
+}
+
+function downloadCsv(url, filename) {
+  fetch(url, { credentials: 'same-origin' })
+    .then(async (res) => {
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const txt = await res.text();
+      const blob = new Blob([txt], { type: 'text/csv' });
+      const link = document.createElement('a');
+      link.href = URL.createObjectURL(blob);
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    })
+    .catch((err) => showToast('fail', 'CSV indirilemedi: ' + err.message));
+}
+
+// export buttons
+document.addEventListener('DOMContentLoaded', () => {
+  const eCache = document.getElementById('export-cache-csv');
+  const eAddons = document.getElementById('export-addons-csv');
+  eCache?.addEventListener('click', () => downloadCsv(`${API}/api/cache-metrics/csv`, 'cache-metrics.csv'));
+  eAddons?.addEventListener('click', () => downloadCsv(`${API}/api/addons/csv`, 'addons.csv'));
+});
 
 function startPolling() {
   stopPolling();

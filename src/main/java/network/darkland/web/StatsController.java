@@ -14,8 +14,41 @@ import java.util.Map;
 @RequestMapping("/api")
 public class StatsController {
 
+    private static final long SSE_INTERVAL_MS = 5000L;
+
     @GetMapping("/stats")
     public Map<String, Object> stats() {
+        return getStatsMap();
+    }
+
+    @GetMapping(path = "/stream/stats", produces = "text/event-stream")
+    public org.springframework.web.servlet.mvc.method.annotation.SseEmitter streamStats() {
+        final org.springframework.web.servlet.mvc.method.annotation.SseEmitter emitter = new org.springframework.web.servlet.mvc.method.annotation.SseEmitter(0L);
+        final java.util.concurrent.ScheduledExecutorService exec = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "sse-stats-sender");
+            t.setDaemon(true);
+            return t;
+        });
+
+        final Runnable sender = () -> {
+            try {
+                Map<String, Object> stats = getStatsMap();
+                emitter.send(org.springframework.web.servlet.mvc.method.annotation.SseEmitter.event().name("stats").data(stats));
+            } catch (Exception e) {
+                try { emitter.completeWithError(e); } catch (Exception ignored) {}
+            }
+        };
+
+        exec.scheduleAtFixedRate(sender, 0, SSE_INTERVAL_MS, java.util.concurrent.TimeUnit.MILLISECONDS);
+
+        emitter.onCompletion(exec::shutdown);
+        emitter.onTimeout(exec::shutdown);
+        emitter.onError((ex) -> exec.shutdown());
+
+        return emitter;
+    }
+
+    private Map<String, Object> getStatsMap() {
         NexusApplication nexus = NexusApplication.getApplication();
 
         Map<String, Object> stats = new LinkedHashMap<>();

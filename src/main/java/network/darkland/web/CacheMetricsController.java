@@ -61,4 +61,36 @@ public class CacheMetricsController {
         out.put("timestamp", System.currentTimeMillis());
         return out;
     }
+
+    @GetMapping(path = "/cache-metrics/csv", produces = "text/csv")
+    public org.springframework.http.ResponseEntity<String> cacheMetricsCsv() {
+        Map<String, Object> cm = cacheMetrics();
+        @SuppressWarnings("unchecked")
+        java.util.List<Map<String, Object>> regions = (java.util.List<Map<String, Object>>) cm.getOrDefault("regions", java.util.List.of());
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("addonId,addonName,l1Enabled,l1Hits,l2Hits,l3Hits,l1Ratio\n");
+        for (Map<String, Object> r : regions) {
+            sb.append(escapeCsv(String.valueOf(r.get("addonId")))).append(',')
+              .append(escapeCsv(String.valueOf(r.get("addonName")))).append(',')
+              .append(String.valueOf(r.get("l1Enabled"))).append(',')
+              .append(String.valueOf(r.get("l1Hits"))).append(',')
+              .append(String.valueOf(r.get("l2Hits"))).append(',')
+              .append(String.valueOf(r.get("l3Hits"))).append(',')
+              .append(String.valueOf(r.get("l1Ratio"))).append('\n');
+        }
+
+        return org.springframework.http.ResponseEntity.ok()
+                .header("Content-Disposition", "attachment; filename=cache-metrics.csv")
+                .contentType(org.springframework.http.MediaType.TEXT_PLAIN)
+                .body(sb.toString());
+    }
+
+    private static String escapeCsv(String s) {
+        if (s == null) return "";
+        if (s.contains(",") || s.contains("\n") || s.contains("\"")) {
+            return '"' + s.replace("\"", "\"\"") + '"';
+        }
+        return s;
+    }
 }
