@@ -10,13 +10,13 @@
 
 <section id="login-screen" class="screen">
   <div class="login-intro">
-    <p class="eyebrow">DARKLAND / NEXUS CORE</p>
+    <p class="eyebrow">Nexus Cache Orchestrator v1.7.0</p>
     <h2 data-i18n="design.login.title">Tüm ağın. Tek merkezde.</h2>
     <p data-i18n="design.login.description">Önbelleğini izle, verilerini keşfet ve sunucu ağının nabzını tut.</p>
     <div class="architecture" aria-hidden="true">
       <span><b>01 / MEMORY</b>Caffeine</span><i>→</i>
       <span><b>02 / CACHE</b>Redis</span><i>→</i>
-      <span><b>03 / STORAGE</b>MongoDB</span>
+      <span><b>03 / STORAGE</b>Database</span>
     </div>
   </div>
   <div class="login-card">
@@ -25,10 +25,8 @@
       <button type="button" class="lang-btn" data-lang="en">EN</button>
     </div>
     <div class="wordmark">
-      <h1>NEXUS</h1>
-      <span class="dot" aria-hidden="true"></span>
+      <h1>NEXUS PANEL</h1>
     </div>
-    <p class="subtitle" data-i18n="app.subtitle">cache orchestrator / panel</p>
 
     <form id="login-form">
       <label for="username" data-i18n="login.username">Kullanıcı adı</label>
@@ -107,7 +105,7 @@
       </div>
       <div class="stat-card" id="stat-mongo-card">
         <div class="stat-top">
-          <span class="stat-label">MongoDB</span>
+          <span class="stat-label">Database</span>
         </div>
         <span class="stat-value" id="stat-mongo">—</span>
         <span class="stat-delta dim" id="stat-mongo-sub">bağlantı durumu</span>
@@ -133,7 +131,7 @@
           <th data-i18n="cache.th.region">Eklenti</th>
           <th data-i18n="cache.th.l1">L1 (memory)</th>
           <th data-i18n="cache.th.l2">L2 (Redis)</th>
-          <th data-i18n="cache.th.l3">L3 (Mongo)</th>
+          <th data-i18n="cache.th.l3">L3 (Database)</th>
           <th data-i18n="cache.th.ratio">L1 oranı</th>
         </tr>
         </thead>

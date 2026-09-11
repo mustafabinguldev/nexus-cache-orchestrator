@@ -1,9 +1,5 @@
-package network.darkland.mongo;
+package network.darkland.db.mongo;
 
-import com.mongodb.ConnectionString;
-import com.mongodb.MongoClientSettings;
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
 import com.mongodb.client.model.Filters;
 import com.mongodb.client.model.Indexes;
 import com.mongodb.client.model.ReplaceOptions;
@@ -13,77 +9,43 @@ import network.darkland.resilience.ResilienceConfig;
 import network.darkland.resilience.ResilienceExecutor;
 import org.bson.Document;
 
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-public class MongoManager {
+/**
+ * All the "what do we store and how do we query it" logic for MongoDB. Takes a
+ * {@link MongoConnectionManager} to talk to the cluster, but never opens/closes it —
+ * that stays the manager's responsibility. An addon's {@link DataAddon#getNamespace()}
+ * becomes the Mongo database name and {@link DataAddon#getDataset()} the collection name.
+ */
+public final class MongoRepository {
 
-    private final MongoClient client;
-
+    private final MongoConnectionManager connectionManager;
     private final ExecutorService executor;
-
     private final ResilienceConfig resilience;
 
-    public MongoManager(String uri, ExecutorService executor, ResilienceConfig resilience) {
+    public MongoRepository(MongoConnectionManager connectionManager, ExecutorService executor, ResilienceConfig resilience) {
+        this.connectionManager = connectionManager;
         this.executor = executor;
         this.resilience = resilience;
-
-        ConnectionString connectionString =
-                new ConnectionString(uri);
-
-        MongoClientSettings settings = MongoClientSettings.builder()
-                .applyConnectionString(connectionString)
-
-                .applyToClusterSettings(builder ->
-                        builder.serverSelectionTimeout(2, TimeUnit.SECONDS)
-                )
-
-                .applyToSocketSettings(builder ->
-                        builder.connectTimeout(2, TimeUnit.SECONDS)
-                                .readTimeout(2, TimeUnit.SECONDS)
-                )
-
-                .build();
-
-        client = MongoClients.create(settings);
     }
 
-    public MongoManager(String uri, ExecutorService executor) {
-        this(uri, executor, new ResilienceConfig());
+    private com.mongodb.client.MongoCollection<Document> collection(DataAddon addon) {
+        return connectionManager.client()
+                .getDatabase(addon.getNamespace())
+                .getCollection(addon.getDataset());
     }
-
-
-    public boolean verifyConnection() {
-        try {
-            client.getDatabase("admin")
-                    .runCommand(new Document("ping", 1));
-
-            System.out.println("[MongoDB] Connection has been checked");
-            return true;
-
-        } catch (Exception e) {
-            System.err.println("[MongoDB] Connection failed: " + e.getMessage());
-            return false;
-        }
-    }
-
-    public void close() {
-        if (client != null) {
-            client.close();
-        }
-    }
-
 
     public CompletableFuture<Boolean> exists(DataAddon addon, String key) {
         return ResilienceExecutor.decorateAsync(
                 resilience.mongoCircuitBreaker(),
                 resilience.mongoRetry(),
                 resilience.retryScheduler(),
-                () -> CompletableFuture.supplyAsync(() -> {
-                    var collection = client.getDatabase(addon.getDatabase()).getCollection(addon.getCollection());
-                    return collection.countDocuments(Filters.eq(addon.getIdFieldName(), key)) > 0;
-                }, executor)
+                () -> CompletableFuture.supplyAsync(() ->
+                        collection(addon).countDocuments(Filters.eq(addon.getIdFieldName(), key)) > 0, executor)
         );
     }
 
@@ -93,8 +55,7 @@ public class MongoManager {
                 resilience.mongoRetry(),
                 resilience.retryScheduler(),
                 () -> CompletableFuture.supplyAsync(() -> {
-                    Document doc = client.getDatabase(addon.getDatabase())
-                            .getCollection(addon.getCollection())
+                    Document doc = collection(addon)
                             .find(Filters.eq(addon.getIdFieldName(), key))
                             .first();
                     return doc != null ? doc.toJson() : null;
@@ -102,20 +63,15 @@ public class MongoManager {
         );
     }
 
-
-
     public CompletableFuture<Void> removeValue(DataAddon addon, String key) {
         return ResilienceExecutor.decorateAsync(
                 resilience.mongoCircuitBreaker(),
                 resilience.mongoRetry(),
                 resilience.retryScheduler(),
-                () -> CompletableFuture.runAsync(() -> {
-                    var collection = client.getDatabase(addon.getDatabase()).getCollection(addon.getCollection());
-                    collection.deleteOne(Filters.eq(addon.getIdFieldName(), key));
-                }, executor)
+                () -> CompletableFuture.runAsync(() ->
+                        collection(addon).deleteOne(Filters.eq(addon.getIdFieldName(), key)), executor)
         );
     }
-
 
     public CompletableFuture<Void> setValue(DataAddon addon, String key, String jsonValue) {
         return ResilienceExecutor.decorateAsync(
@@ -123,10 +79,8 @@ public class MongoManager {
                 resilience.mongoRetry(),
                 resilience.retryScheduler(),
                 () -> CompletableFuture.runAsync(() -> {
-                    var collection = client.getDatabase(addon.getDatabase()).getCollection(addon.getCollection());
-
                     Document doc = Document.parse(jsonValue);
-                    collection.replaceOne(
+                    collection(addon).replaceOne(
                             Filters.eq(addon.getIdFieldName(), key),
                             doc,
                             new ReplaceOptions().upsert(true)
@@ -135,24 +89,21 @@ public class MongoManager {
         );
     }
 
-
-    public CompletableFuture<java.util.Map<Integer, Object>> getRanking(DataAddon addon, String fieldName, String orderType, int limitCount) {
+    public CompletableFuture<Map<Integer, Object>> getRanking(DataAddon addon, String fieldName, String orderType, int limitCount) {
         return ResilienceExecutor.decorateAsync(
                 resilience.mongoCircuitBreaker(),
                 resilience.mongoRetry(),
                 resilience.retryScheduler(),
                 () -> CompletableFuture.supplyAsync(() -> {
-
-                    java.util.Map<Integer, Object> rankingMap = new java.util.LinkedHashMap<>();
+                    Map<Integer, Object> rankingMap = new LinkedHashMap<>();
 
                     var sortOrder = orderType.equalsIgnoreCase("DESC")
                             ? Sorts.descending(fieldName)
                             : Sorts.ascending(fieldName);
 
-                    java.util.concurrent.atomic.AtomicInteger rank = new java.util.concurrent.atomic.AtomicInteger(1);
+                    AtomicInteger rank = new AtomicInteger(1);
 
-                    client.getDatabase(addon.getDatabase())
-                            .getCollection(addon.getCollection())
+                    collection(addon)
                             .find()
                             .sort(sortOrder)
                             .limit(limitCount)
@@ -172,30 +123,24 @@ public class MongoManager {
                 resilience.mongoRetry(),
                 resilience.retryScheduler(),
                 () -> CompletableFuture.supplyAsync(() -> {
-                    var collection = client.getDatabase(addon.getDatabase())
-                            .getCollection(addon.getCollection());
+                    var collection = collection(addon);
+                    Document doc = collection.find(Filters.eq(addon.getIdFieldName(), key)).first();
 
-                    Document playerDoc = collection.find(Filters.eq(addon.getIdFieldName(), key)).first();
+                    if (doc == null || !doc.containsKey(fieldName)) return -1;
 
-                    if (playerDoc == null || !playerDoc.containsKey(fieldName)) return -1;
-
-                    Object value = playerDoc.get(fieldName);
+                    Object value = doc.get(fieldName);
 
                     var filter = orderType.equalsIgnoreCase("DESC")
                             ? Filters.gt(fieldName, value)
                             : Filters.lt(fieldName, value);
 
                     long countAhead = collection.countDocuments(filter);
-
                     return (int) (countAhead + 1);
                 }, executor)
         );
     }
 
     public void ensureIndex(DataAddon addon, String fieldName) {
-        client.getDatabase(addon.getDatabase())
-                .getCollection(addon.getCollection())
-                .createIndex(Indexes.ascending(fieldName));
+        collection(addon).createIndex(Indexes.ascending(fieldName));
     }
-
 }

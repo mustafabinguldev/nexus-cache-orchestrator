@@ -19,7 +19,7 @@ public final class RankingHandler implements RequestHandler {
 
         NexusApplication app = NexusApplication.getApplication();
         app.getRedisManager().processTask(() -> {
-                            var rankingMap = app.getMongoManager().getRanking(addon, field, order, limit).join();
+                            var rankingMap = app.getDataStore().getRanking(addon, field, order, limit).join();
                             NexusJsonDataContainer response = new NexusJsonDataContainer();
                             response.set("protocol", addon.addonId());
                             response.set("type",     "RANKING_RESPONSE");

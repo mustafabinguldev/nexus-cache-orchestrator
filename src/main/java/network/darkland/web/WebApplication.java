@@ -35,7 +35,7 @@ public class WebApplication {
         try {
             new NexusApplication(
                     cfg.redisHost, cfg.redisPort, cfg.redisUser, cfg.redisPass,
-                    cfg.mongoUri, cfg.metricsEnabled,
+                    cfg.dbConnectionConfig, cfg.metricsEnabled,
                     cfg.influxUrl, cfg.influxToken, cfg.influxOrg, cfg.influxBucket
             );
         } catch (Exception e) {

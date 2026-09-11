@@ -1,7 +1,9 @@
 package network.darkland;
 
 import network.darkland.Influxdb.InfluxDBManager;
-import network.darkland.mongo.MongoManager;
+import network.darkland.db.DataStore;
+import network.darkland.db.DataStoreFactory;
+import network.darkland.db.DbConnectionConfig;
 import network.darkland.protocol.DataAddon;
 import network.darkland.protocol.ProtocolHandler;
 import network.darkland.redis.RedisDataContainer;
@@ -30,7 +32,7 @@ public class NexusApplication {
     private final RedisManager redisManager;
     private final ProtocolHandler protocolHandler;
     private final RedisDataContainer dataContainer;
-    private final MongoManager mongoManager;
+    private final DataStore dataStore;
     private final InfluxDBManager influxDBManager;
 
     public NexusApplication(
@@ -38,7 +40,7 @@ public class NexusApplication {
             int redisPort,
             String redisUser,
             String redisPass,
-            String mongoUri,
+            DbConnectionConfig dbConnectionConfig,
             boolean isMetricsEnabled,
             String influxUrl,
             String influxToken,
@@ -52,14 +54,14 @@ public class NexusApplication {
         this.redisManager    = new RedisManager(this, redisHost, redisPort, redisUser, redisPass, resilienceConfig, false);
         this.protocolHandler = new ProtocolHandler();
         this.dataContainer   = new RedisDataContainer();
-        this.mongoManager    = new MongoManager(mongoUri, redisManager.getMongoExecutor(), resilienceConfig);
+        this.dataStore       = DataStoreFactory.create(dbConnectionConfig, redisManager.getMongoExecutor(), resilienceConfig);
 
         this.redisManager.processTask(() -> {
-            if (!mongoManager.verifyConnection()) {
+            if (!dataStore.verifyConnection()) {
                 SwingUtilities.invokeLater(() ->
                         JOptionPane.showMessageDialog(
                                 null,
-                                "MongoDB connection failed!",
+                                dataStore.type().displayName() + " connection failed!",
                                 "Error",
                                 JOptionPane.ERROR_MESSAGE
                         )
@@ -69,11 +71,11 @@ public class NexusApplication {
         });
 
         this.redisManager.scheduleTask(() -> {
-            if (!mongoManager.verifyConnection()) {
+            if (!dataStore.verifyConnection()) {
                 SwingUtilities.invokeLater(() ->
                         JOptionPane.showMessageDialog(
                                 null,
-                                "MongoDB connection lost!",
+                                dataStore.type().displayName() + " connection lost!",
                                 "Critical Error",
                                 JOptionPane.ERROR_MESSAGE
                         )
@@ -111,7 +113,7 @@ public class NexusApplication {
             String influxOrg,
             String influxBucket
     ) {
-        this(redisHost, 6379, null, null, mongoUri, isMetricsEnabled,
+        this(redisHost, 6379, null, null, DbConnectionConfig.mongo(mongoUri), isMetricsEnabled,
                 influxUrl, influxToken, influxOrg, influxBucket);
     }
 
@@ -214,8 +216,8 @@ public class NexusApplication {
         return dataContainer;
     }
 
-    public MongoManager getMongoManager() {
-        return mongoManager;
+    public DataStore getDataStore() {
+        return dataStore;
     }
 
     public static NexusApplication getApplication() {

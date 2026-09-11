@@ -38,13 +38,14 @@ public class StatsController {
         stats.put("l1HitRatio", l1Ratio);
         stats.put("clusterMode", L1InvalidationBus.isClusterModeEnabled());
 
-        boolean mongoOk;
+        boolean dbOk;
         try {
-            mongoOk = nexus.getMongoManager().verifyConnection();
+            dbOk = nexus.getDataStore().verifyConnection();
         } catch (Exception e) {
-            mongoOk = false;
+            dbOk = false;
         }
-        stats.put("mongoConnected", mongoOk);
+        stats.put("mongoConnected", dbOk);
+        stats.put("dbType", nexus.getDataStore().type().name());
         stats.put("timestamp", System.currentTimeMillis());
 
         return stats;

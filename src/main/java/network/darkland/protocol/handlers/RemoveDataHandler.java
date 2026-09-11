@@ -27,7 +27,7 @@ public final class RemoveDataHandler implements RequestHandler {
                 addon.getData(json).ifPresent(dataModel -> {
                     app.getDataContainer().removeModel(dataModel.getKey());
                     if (allRemove) {
-                        app.getMongoManager().removeValue(addon, specificId).join();
+                        app.getDataStore().removeValue(addon, specificId).join();
                     }
                 });
 

@@ -3,6 +3,8 @@ package network.darkland.resilience;
 import com.mongodb.MongoException;
 import com.mongodb.MongoSocketException;
 import com.mongodb.MongoTimeoutException;
+import java.sql.SQLException;
+import java.sql.SQLTransientException;
 import io.github.resilience4j.circuitbreaker.CircuitBreaker;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerConfig;
 import io.github.resilience4j.circuitbreaker.CircuitBreakerRegistry;
@@ -25,6 +27,7 @@ public final class ResilienceConfig {
 
     public static final String MONGO_INSTANCE = "mongo";
     public static final String REDIS_INSTANCE = "redis";
+    public static final String SQL_INSTANCE = "sql";
 
     private final CircuitBreakerRegistry circuitBreakerRegistry;
     private final RetryRegistry retryRegistry;
@@ -35,6 +38,9 @@ public final class ResilienceConfig {
 
     private final CircuitBreaker redisCircuitBreaker;
     private final Retry redisRetry;
+
+    private final CircuitBreaker sqlCircuitBreaker;
+    private final Retry sqlRetry;
 
     public ResilienceConfig() {
         this.retryScheduler = Executors.newScheduledThreadPool(2, r -> {
@@ -77,6 +83,24 @@ public final class ResilienceConfig {
                 .retryExceptions(JedisConnectionException.class)
                 .build();
 
+        CircuitBreakerConfig sqlCbConfig = CircuitBreakerConfig.custom()
+                .slidingWindowType(CircuitBreakerConfig.SlidingWindowType.COUNT_BASED)
+                .slidingWindowSize(20)
+                .minimumNumberOfCalls(10)
+                .failureRateThreshold(50.0f)
+                .slowCallDurationThreshold(Duration.ofSeconds(2))
+                .slowCallRateThreshold(80.0f)
+                .waitDurationInOpenState(Duration.ofSeconds(10))
+                .permittedNumberOfCallsInHalfOpenState(5)
+                .recordExceptions(SQLException.class, SQLTransientException.class)
+                .build();
+
+        RetryConfig sqlRetryConfig = RetryConfig.custom()
+                .maxAttempts(3)
+                .intervalFunction(IntervalFunction.ofExponentialBackoff(Duration.ofMillis(200), 2.0))
+                .retryExceptions(SQLTransientException.class)
+                .build();
+
         this.circuitBreakerRegistry = CircuitBreakerRegistry.ofDefaults();
         this.retryRegistry = RetryRegistry.ofDefaults();
 
@@ -86,8 +110,12 @@ public final class ResilienceConfig {
         this.redisCircuitBreaker = circuitBreakerRegistry.circuitBreaker(REDIS_INSTANCE, redisCbConfig);
         this.redisRetry = retryRegistry.retry(REDIS_INSTANCE, redisRetryConfig);
 
+        this.sqlCircuitBreaker = circuitBreakerRegistry.circuitBreaker(SQL_INSTANCE, sqlCbConfig);
+        this.sqlRetry = retryRegistry.retry(SQL_INSTANCE, sqlRetryConfig);
+
         registerEventLoggers(mongoCircuitBreaker);
         registerEventLoggers(redisCircuitBreaker);
+        registerEventLoggers(sqlCircuitBreaker);
     }
 
     private void registerEventLoggers(CircuitBreaker cb) {
@@ -122,8 +150,20 @@ public final class ResilienceConfig {
         return retryScheduler;
     }
 
+    public CircuitBreaker sqlCircuitBreaker() {
+        return sqlCircuitBreaker;
+    }
+
+    public Retry sqlRetry() {
+        return sqlRetry;
+    }
+
     public CircuitBreaker.State mongoState() {
         return mongoCircuitBreaker.getState();
+    }
+
+    public CircuitBreaker.State sqlState() {
+        return sqlCircuitBreaker.getState();
     }
 
     public CircuitBreaker.State redisState() {
