@@ -1,5 +1,7 @@
 package network.darkland.db.sql;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import network.darkland.protocol.DataAddon;
 import network.darkland.resilience.ResilienceConfig;
 import network.darkland.resilience.ResilienceExecutor;
@@ -8,6 +10,9 @@ import java.sql.Connection;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
@@ -20,6 +25,7 @@ import java.util.logging.Logger;
 public final class SqlRepository {
 
     private static final Logger LOGGER = Logger.getLogger(SqlRepository.class.getName());
+    private static final ObjectMapper JSON = new ObjectMapper();
 
     private final SqlConnectionManager connectionManager;
     private final SqlDialect dialect;
@@ -41,9 +47,44 @@ public final class SqlRepository {
         return sanitizeIdentifier(raw);
     }
 
-    private static String sanitizeIdentifier(String raw) {
+    static String sanitizeIdentifier(String raw) {
         String cleaned = raw.toLowerCase(Locale.ROOT).replaceAll("[^a-z0-9_]", "_");
-        return cleaned.length() > 63 ? cleaned.substring(0, 63) : cleaned;
+        if (cleaned.equals(raw) && cleaned.length() <= 63) return cleaned;
+
+        String hash = sha256(raw).substring(0, 12);
+        int prefixLength = Math.min(cleaned.length(), 63 - hash.length() - 1);
+        return cleaned.substring(0, prefixLength) + "_" + hash;
+    }
+
+    static String validateFieldName(String fieldName) {
+        if (fieldName == null || !fieldName.matches("[A-Za-z_][A-Za-z0-9_]{0,63}")) {
+            throw new IllegalArgumentException("Invalid ranking field name");
+        }
+        return fieldName;
+    }
+
+    static int validateRankingLimit(int limit) {
+        if (limit < 1 || limit > 1_000) {
+            throw new IllegalArgumentException("Ranking limit must be between 1 and 1000");
+        }
+        return limit;
+    }
+
+    private static String sha256(String value) {
+        try {
+            return java.util.HexFormat.of().formatHex(
+                    MessageDigest.getInstance("SHA-256").digest(value.getBytes(StandardCharsets.UTF_8)));
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 is unavailable", e);
+        }
+    }
+
+    static Object parseJsonData(String json) {
+        try {
+            return JSON.readValue(json, Object.class);
+        } catch (JsonProcessingException e) {
+            throw new IllegalStateException("[SQL] Stored data is not valid JSON", e);
+        }
     }
 
     private void ensureTable(DataAddon addon) {
@@ -144,6 +185,10 @@ public final class SqlRepository {
     }
 
     public CompletableFuture<Map<Integer, Object>> getRanking(DataAddon addon, String fieldName, String orderType, int limitCount) {
+        fieldName = validateFieldName(fieldName);
+        limitCount = validateRankingLimit(limitCount);
+        String validatedFieldName = fieldName;
+        int validatedLimitCount = limitCount;
         return ResilienceExecutor.decorateAsync(
                 resilience.sqlCircuitBreaker(),
                 resilience.sqlRetry(),
@@ -152,22 +197,22 @@ public final class SqlRepository {
                     ensureTable(addon);
                     String table = tableName(addon);
                     String direction = "DESC".equalsIgnoreCase(orderType) ? "DESC" : "ASC";
-                    String orderExpr = dialect.numericFieldExpression("data", fieldName);
+                    String orderExpr = dialect.numericFieldExpression("data", validatedFieldName);
 
                     String sql = dialect.rankingQuery(table, orderExpr, direction);
 
                     Map<Integer, Object> rankingMap = new LinkedHashMap<>();
                     try (Connection conn = connectionManager.getConnection();
                          PreparedStatement ps = conn.prepareStatement(sql)) {
-                        ps.setInt(1, limitCount);
+                        ps.setInt(1, validatedLimitCount);
                         int rank = 1;
                         try (ResultSet rs = ps.executeQuery()) {
                             while (rs.next()) {
-                                rankingMap.put(rank++, rs.getString("data"));
+                                rankingMap.put(rank++, parseJsonData(rs.getString("data")));
                             }
                         }
                     } catch (SQLException e) {
-                        throw new IllegalStateException("[SQL] getRanking() failed for field=" + fieldName, e);
+                        throw new IllegalStateException("[SQL] getRanking() failed for field=" + validatedFieldName, e);
                     }
                     return rankingMap;
                 }, executor)
@@ -175,6 +220,8 @@ public final class SqlRepository {
     }
 
     public CompletableFuture<Integer> getPosition(DataAddon addon, String key, String fieldName, String orderType) {
+        fieldName = validateFieldName(fieldName);
+        String validatedFieldName = fieldName;
         return ResilienceExecutor.decorateAsync(
                 resilience.sqlCircuitBreaker(),
                 resilience.sqlRetry(),
@@ -182,7 +229,7 @@ public final class SqlRepository {
                 () -> CompletableFuture.supplyAsync(() -> {
                     ensureTable(addon);
                     String table = tableName(addon);
-                    String fieldExpr = dialect.numericFieldExpression("data", fieldName);
+                    String fieldExpr = dialect.numericFieldExpression("data", validatedFieldName);
 
                     Double value = null;
                     String selectSql = "SELECT " + fieldExpr + " AS field_value FROM " + table + " WHERE id_key = ?";
@@ -220,6 +267,7 @@ public final class SqlRepository {
     }
 
     public void ensureIndex(DataAddon addon, String fieldName) {
+        fieldName = validateFieldName(fieldName);
         ensureTable(addon);
         String table = tableName(addon);
         String indexName = sanitizeIdentifier("idx_" + table + "_" + fieldName);

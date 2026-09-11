@@ -3,6 +3,7 @@ package network.darkland.db.sql.mariadb;
 import network.darkland.db.sql.SqlDialect;
 
 import java.util.List;
+import java.util.Locale;
 
 /**
  * MariaDB specific SQL fragments. Kept as its own dialect (rather than reusing
@@ -51,7 +52,12 @@ public final class MariaDbDialect implements SqlDialect {
 
     @Override
     public List<String> createIndexStatements(String table, String indexName, String fieldName) {
-        String sql = "CREATE INDEX `" + indexName + "` ON `" + table + "` ((" + numericFieldExpression("data", fieldName) + "))";
-        return List.of(sql);
+        String normalizedIndex = indexName.toLowerCase(Locale.ROOT);
+        String columnName = normalizedIndex.substring(0, Math.min(normalizedIndex.length(), 59)) + "_col";
+        return List.of(
+                "ALTER TABLE `" + table + "` ADD COLUMN IF NOT EXISTS `" + columnName
+                        + "` DECIMAL(30,6) AS (" + numericFieldExpression("data", fieldName) + ") PERSISTENT",
+                "CREATE INDEX IF NOT EXISTS `" + indexName + "` ON `" + table + "` (`" + columnName + "`)"
+        );
     }
 }

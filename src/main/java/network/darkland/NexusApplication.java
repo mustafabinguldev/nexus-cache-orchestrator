@@ -97,6 +97,7 @@ public class NexusApplication {
 
         // Uygulama kapanırken InfluxDB buffer'ının düzgün flush edilmesi için.
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            this.dataStore.close();
             if (this.influxDBManager != null) {
                 this.influxDBManager.close();
             }
