@@ -15,12 +15,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * All the "what do we store and how do we query it" logic for MongoDB. Takes a
- * {@link MongoConnectionManager} to talk to the cluster, but never opens/closes it —
- * that stays the manager's responsibility. An addon's {@link DataAddon#getNamespace()}
- * becomes the Mongo database name and {@link DataAddon#getDataset()} the collection name.
- */
 public final class MongoRepository {
 
     private final MongoConnectionManager connectionManager;

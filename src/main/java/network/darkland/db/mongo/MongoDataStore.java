@@ -9,11 +9,6 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutorService;
 
-/**
- * MongoDB {@link DataStore}. Pure composition, no logic of its own: connection lifecycle
- * lives in {@link MongoConnectionManager}, query/write logic lives in {@link MongoRepository}.
- * This class only wires the two together and satisfies the {@link DataStore} contract.
- */
 public final class MongoDataStore implements DataStore {
 
     private final MongoConnectionManager connectionManager;
