@@ -3,6 +3,14 @@ const POLL_SECONDS = 5;
 const HISTORY_LENGTH = 24;
 const DIRTY_WARN_THRESHOLD = 50;
 
+function getCsrfToken() {
+  const token = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith("XSRF-TOKEN="))
+    ?.split("=")[1];
+  return token ? decodeURIComponent(token) : "";
+}
+
 let pollTimer = null;
 let countdownTimer = null;
 let clockTimer = null;
@@ -368,7 +376,10 @@ loginForm.addEventListener("submit", async (e) => {
     const res = await fetch(`${API}/api/login`, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/json" },
+      headers: {
+        "Content-Type": "application/json",
+        "X-XSRF-TOKEN": getCsrfToken(),
+      },
       body: JSON.stringify({ username, password }),
     });
 
@@ -399,6 +410,7 @@ logoutBtn.addEventListener("click", async () => {
     await fetch(`${API}/api/logout`, {
       method: "POST",
       credentials: "same-origin",
+      headers: { "X-XSRF-TOKEN": getCsrfToken() },
     });
   } catch (_) { /* sunucuya ulaşamasak bile ekranı değiştir */ }
 
