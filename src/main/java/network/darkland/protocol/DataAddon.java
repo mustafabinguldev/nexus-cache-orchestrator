@@ -100,8 +100,11 @@ public abstract class DataAddon {
     public abstract int     addonId();
     public abstract String  addonName();
     public abstract String  cacheKeyHeaderTag();
-    public abstract String  getDatabase();
-    public abstract String  getCollection();
+
+    public abstract String  getNamespace();
+
+    public abstract String  getDataset();
+
     public abstract int     getCacheTTL();
 
     public boolean l1CacheEnabled() {
@@ -358,7 +361,7 @@ public abstract class DataAddon {
                 }
             }
 
-            String dbJson = app.getMongoManager().getValue(this, specificValue).join();
+            String dbJson = app.getDataStore().getValue(this, specificValue).join();
             if (dbJson != null) {
                 CacheMetrics.get().recordL3Hit(cacheKeyHeaderTag());
                 DataModel m = new DataModel(keyTag, UUID.randomUUID().toString(),

@@ -30,8 +30,8 @@ public class AddonsController {
         m.put("id",         addon.addonId());
         m.put("name",       addon.addonName());
         m.put("className",  addon.getClass().getSimpleName());
-        m.put("database",   addon.getDatabase());
-        m.put("collection", addon.getCollection());
+        m.put("database",   addon.getNamespace());
+        m.put("collection", addon.getDataset());
         m.put("cacheTTL",   addon.getCacheTTL());
         return m;
     }

@@ -19,7 +19,7 @@ public final class RankFinderHandler implements RequestHandler {
 
         NexusApplication app = NexusApplication.getApplication();
         app.getRedisManager().processTask(() -> {
-                            var position = app.getMongoManager().getPosition(addon, key, field, order).join();
+                            var position = app.getDataStore().getPosition(addon, key, field, order).join();
                             NexusJsonDataContainer response = new NexusJsonDataContainer();
                             response.set("protocol", addon.addonId());
                             response.set("type",     "RANK_FINDER_RESPONSE");

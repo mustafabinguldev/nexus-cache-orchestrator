@@ -59,7 +59,7 @@ public class RedisDataContainer {
         synchronized (flushLock(key)) {
             PendingWrite pending = pendingWrites.get(key);
             if (pending == null) return;
-            NexusApplication.getApplication().getMongoManager()
+            NexusApplication.getApplication().getDataStore()
                     .setValue(pending.model().getAddon(), pending.model().getSpecificDbKey(), pending.json()).join();
             pendingWrites.compute(key, (k, current) -> {
                 if (current != pending) return current;
@@ -208,7 +208,7 @@ public class RedisDataContainer {
                 String redisJson = rm.getData(key).orElseGet(model::getValueJson);
 
                 CompletableFuture<?> future = NexusApplication.getApplication()
-                        .getMongoManager()
+                        .getDataStore()
                         .getValue(model.getAddon(), model.getSpecificDbKey())
                         .thenAccept(dbJson -> {
                             synchronized (flushLock(key)) {
@@ -217,7 +217,7 @@ public class RedisDataContainer {
                                         || !redisJson.equals(model.getValueJson())) return;
                                 String cleanDbJson = dbJson == null ? null : model.getAddon().modelInitComp(dbJson);
                                 if (!redisJson.equals(cleanDbJson)) {
-                                    NexusApplication.getApplication().getMongoManager()
+                                    NexusApplication.getApplication().getDataStore()
                                             .setValue(model.getAddon(), model.getSpecificDbKey(), redisJson).join();
                                 }
                             }

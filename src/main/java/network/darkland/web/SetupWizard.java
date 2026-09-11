@@ -1,7 +1,14 @@
 package network.darkland.web;
 
 import com.mongodb.MongoException;
-import network.darkland.mongo.MongoManager;
+import network.darkland.db.DatabaseType;
+import network.darkland.db.DbConnectionConfig;
+import network.darkland.db.mongo.MongoConnectionManager;
+import network.darkland.db.sql.mariadb.MariaDbDialect;
+import network.darkland.db.sql.mssql.MsSqlDialect;
+import network.darkland.db.sql.mysql.MySqlDialect;
+import network.darkland.db.sql.postgresql.PostgreSqlDialect;
+import network.darkland.db.sql.sqlite.SqliteDialect;
 import org.json.JSONObject;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import redis.clients.jedis.Jedis;
@@ -17,12 +24,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 import java.nio.file.attribute.PosixFilePermission;
+import java.sql.Connection;
+import java.sql.DriverManager;
 import java.util.EnumSet;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 
 public class SetupWizard {
 
@@ -48,8 +55,8 @@ public class SetupWizard {
 
         testRedis(redisHost, redisPort, redisUser, redisPass);
 
-        String mongoUri = ask(msg("mongo.uri"), "mongodb://localhost:27017");
-        testMongo(mongoUri);
+        DatabaseType dbType = askDatabaseType();
+        DbConnectionConfig dbConnectionConfig = askDbConnection(dbType);
 
         boolean metricsEnabled = askYesNo(msg("influx.enable"), false);
         String influxUrl = null, influxToken = null, influxOrg = null, influxBucket = null;
@@ -72,7 +79,8 @@ public class SetupWizard {
         cfg.put("redisPort", redisPort);
         cfg.put("redisUser", redisUser);
         cfg.put("redisPass", redisPass);
-        cfg.put("mongoUri", mongoUri);
+        cfg.put("dbType", dbType.name());
+        cfg.put("db", dbConnectionConfigToJson(dbConnectionConfig));
         cfg.put("metricsEnabled", metricsEnabled);
         if (metricsEnabled) {
             JSONObject influx = new JSONObject();
@@ -94,6 +102,104 @@ public class SetupWizard {
         System.out.println();
 
         return NexusWebConfig.load();
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Database engine selection
+    // ────────────────────────────────────────────────────────────────────────
+
+    private DatabaseType askDatabaseType() {
+        System.out.println();
+        System.out.println(msg("db.select.title"));
+        System.out.println("1) MongoDB");
+        System.out.println("2) MySQL");
+        System.out.println("3) MariaDB");
+        System.out.println("4) PostgreSQL");
+        System.out.println("5) Microsoft SQL Server");
+        System.out.println("6) SQLite");
+        System.out.print(msg("db.select.prompt") + " [1]: ");
+
+        String input = readLine().trim();
+        return switch (input) {
+            case "2" -> DatabaseType.MYSQL;
+            case "3" -> DatabaseType.MARIADB;
+            case "4" -> DatabaseType.POSTGRESQL;
+            case "5" -> DatabaseType.MSSQL;
+            case "6" -> DatabaseType.SQLITE;
+            default -> DatabaseType.MONGODB;
+        };
+    }
+
+    private DbConnectionConfig askDbConnection(DatabaseType type) {
+        return switch (type) {
+            case MONGODB -> {
+                String mongoUri = ask(msg("mongo.uri"), "mongodb://localhost:27017");
+                testMongo(mongoUri);
+                yield DbConnectionConfig.mongo(mongoUri);
+            }
+            case MYSQL -> {
+                MySqlDialect dialect = new MySqlDialect();
+                String host = ask(msg("db.host"), "127.0.0.1");
+                int port = askInt(msg("db.port"), 3306);
+                String database = ask(msg("db.database"), "nexus");
+                String username = ask(msg("db.user"), "root");
+                String password = askPassword(msg("db.pass"), true);
+                testJdbc(dialect.buildJdbcUrl(host, port, database), dialect.driverClassName(), username, password);
+                yield DbConnectionConfig.mysql(host, port, database, username, password);
+            }
+            case MARIADB -> {
+                MariaDbDialect dialect = new MariaDbDialect();
+                String host = ask(msg("db.host"), "127.0.0.1");
+                int port = askInt(msg("db.port"), 3306);
+                String database = ask(msg("db.database"), "nexus");
+                String username = ask(msg("db.user"), "root");
+                String password = askPassword(msg("db.pass"), true);
+                testJdbc(dialect.buildJdbcUrl(host, port, database), dialect.driverClassName(), username, password);
+                yield DbConnectionConfig.mariadb(host, port, database, username, password);
+            }
+            case POSTGRESQL -> {
+                PostgreSqlDialect dialect = new PostgreSqlDialect();
+                String host = ask(msg("db.host"), "127.0.0.1");
+                int port = askInt(msg("db.port"), 5432);
+                String database = ask(msg("db.database"), "nexus");
+                String username = ask(msg("db.user"), "postgres");
+                String password = askPassword(msg("db.pass"), true);
+                testJdbc(dialect.buildJdbcUrl(host, port, database), dialect.driverClassName(), username, password);
+                yield DbConnectionConfig.postgresql(host, port, database, username, password);
+            }
+            case MSSQL -> {
+                MsSqlDialect dialect = new MsSqlDialect();
+                String host = ask(msg("db.host"), "127.0.0.1");
+                int port = askInt(msg("db.port"), 1433);
+                String database = ask(msg("db.database"), "nexus");
+                String username = ask(msg("db.user"), "sa");
+                String password = askPassword(msg("db.pass"), true);
+                testJdbc(dialect.buildJdbcUrl(host, port, database), dialect.driverClassName(), username, password);
+                yield DbConnectionConfig.mssql(host, port, database, username, password);
+            }
+            case SQLITE -> {
+                SqliteDialect dialect = new SqliteDialect();
+                String filePath = ask(msg("db.sqlite.path"), "nexus-data.db");
+                testJdbc(dialect.buildJdbcUrlForFile(filePath), dialect.driverClassName(), null, null);
+                yield DbConnectionConfig.sqlite(filePath);
+            }
+        };
+    }
+
+    private JSONObject dbConnectionConfigToJson(DbConnectionConfig config) {
+        JSONObject db = new JSONObject();
+        switch (config.type()) {
+            case MONGODB -> db.put("mongoUri", config.mongoUri());
+            case MYSQL, MARIADB, POSTGRESQL, MSSQL -> {
+                db.put("host", config.host());
+                db.put("port", config.port());
+                db.put("database", config.database());
+                db.put("username", config.username());
+                db.put("password", config.password());
+            }
+            case SQLITE -> db.put("filePath", config.filePath());
+        }
+        return db;
     }
 
     private void selectLanguage() {
@@ -122,6 +228,15 @@ public class SetupWizard {
                 Map.entry("redis.testing", "→ Redis bağlantısı test ediliyor... "),
                 Map.entry("mongo.uri", "MongoDB bağlantı URI'si"),
                 Map.entry("mongo.testing", "→ MongoDB bağlantısı test ediliyor... "),
+                Map.entry("db.select.title", "Hangi veritabanını kullanmak istiyorsun?"),
+                Map.entry("db.select.prompt", "Seçim"),
+                Map.entry("db.host", "Veritabanı host"),
+                Map.entry("db.port", "Veritabanı portu"),
+                Map.entry("db.database", "Veritabanı adı"),
+                Map.entry("db.user", "Veritabanı kullanıcı adı"),
+                Map.entry("db.pass", "Veritabanı parolası (yoksa boş bırak, ENTER'a bas)"),
+                Map.entry("db.testing", "→ Veritabanı bağlantısı test ediliyor... "),
+                Map.entry("db.sqlite.path", "SQLite dosya yolu"),
                 Map.entry("influx.enable", "InfluxDB metrikleri etkinleştirilsin mi?"),
                 Map.entry("influx.url", "InfluxDB URL"),
                 Map.entry("influx.token", "InfluxDB token"),
@@ -155,6 +270,15 @@ public class SetupWizard {
                 Map.entry("redis.testing", "→ Testing Redis connection... "),
                 Map.entry("mongo.uri", "MongoDB connection URI"),
                 Map.entry("mongo.testing", "→ Testing MongoDB connection... "),
+                Map.entry("db.select.title", "Which database would you like to use?"),
+                Map.entry("db.select.prompt", "Choice"),
+                Map.entry("db.host", "Database host"),
+                Map.entry("db.port", "Database port"),
+                Map.entry("db.database", "Database name"),
+                Map.entry("db.user", "Database username"),
+                Map.entry("db.pass", "Database password (press ENTER if none)"),
+                Map.entry("db.testing", "→ Testing database connection... "),
+                Map.entry("db.sqlite.path", "SQLite file path"),
                 Map.entry("influx.enable", "Enable InfluxDB metrics?"),
                 Map.entry("influx.url", "InfluxDB URL"),
                 Map.entry("influx.token", "InfluxDB token"),
@@ -215,10 +339,9 @@ public class SetupWizard {
 
     private void testMongo(String uri) {
         System.out.print(msg("mongo.testing"));
-        MongoManager tempManager = null;
-        ExecutorService tempExecutor = Executors.newVirtualThreadPerTaskExecutor();
+        MongoConnectionManager tempManager = null;
         try {
-            tempManager = new MongoManager(uri, tempExecutor);
+            tempManager = new MongoConnectionManager(uri);
             if (tempManager.verifyConnection()) {
                 System.out.println(msg("test.success"));
             } else {
@@ -232,9 +355,28 @@ public class SetupWizard {
             if (tempManager != null) {
                 tempManager.close();
             }
-            tempExecutor.shutdown();
         }
     }
+    private void testJdbc(String jdbcUrl, String driverClassName, String username, String password) {
+        System.out.print(msg("db.testing"));
+        try {
+            Class.forName(driverClassName);
+            try (Connection conn = (username == null)
+                    ? DriverManager.getConnection(jdbcUrl)
+                    : DriverManager.getConnection(jdbcUrl, username, password)) {
+                if (conn.isValid(2)) {
+                    System.out.println(msg("test.success"));
+                } else {
+                    System.out.println(msg("test.failed"));
+                    warnAndContinue();
+                }
+            }
+        } catch (Exception e) {
+            System.out.println(msg("test.failed") + " (" + e.getMessage() + ")");
+            warnAndContinue();
+        }
+    }
+
     private void warnAndContinue() {
         boolean proceed = askYesNo(msg("test.warn_continue"), true);
         if (!proceed) {

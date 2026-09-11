@@ -1,5 +1,7 @@
 package network.darkland.web;
 
+import network.darkland.db.DatabaseType;
+import network.darkland.db.DbConnectionConfig;
 import org.json.JSONObject;
 
 import java.nio.file.Files;
@@ -13,7 +15,7 @@ public class NexusWebConfig {
     public final int redisPort;
     public final String redisUser;
     public final String redisPass;
-    public final String mongoUri;
+    public final DbConnectionConfig dbConnectionConfig;
     public final boolean metricsEnabled;
     public final String influxUrl;
     public final String influxToken;
@@ -28,7 +30,7 @@ public class NexusWebConfig {
         this.redisPort = cfg.optInt("redisPort", 6379);
         this.redisUser = cfg.optString("redisUser", "");
         this.redisPass = cfg.optString("redisPass", "");
-        this.mongoUri  = cfg.optString("mongoUri", "mongodb://localhost:27017");
+        this.dbConnectionConfig = parseDbConnectionConfig(cfg);
         this.metricsEnabled = cfg.optBoolean("metricsEnabled", false);
 
         String iUrl = null, iToken = null, iOrg = null, iBucket = null;
@@ -49,6 +51,47 @@ public class NexusWebConfig {
         this.adminPasswordHash = cfg.optString("adminPasswordHash", "");
     }
 
+    private static DbConnectionConfig parseDbConnectionConfig(JSONObject cfg) {
+        if (!cfg.has("dbType")) {
+            // Legacy config.json: always Mongo, connection string at the top level.
+            String legacyUri = cfg.optString("mongoUri", "mongodb://localhost:27017");
+            return DbConnectionConfig.mongo(legacyUri);
+        }
+
+        DatabaseType type = DatabaseType.from(cfg.optString("dbType", "MONGODB"));
+        JSONObject db = cfg.optJSONObject("db");
+        if (db == null) db = new JSONObject();
+
+        return switch (type) {
+            case MONGODB -> DbConnectionConfig.mongo(db.optString("mongoUri", "mongodb://localhost:27017"));
+            case MYSQL -> DbConnectionConfig.mysql(
+                    db.optString("host", "127.0.0.1"),
+                    db.optInt("port", 3306),
+                    db.optString("database", "nexus"),
+                    db.optString("username", "root"),
+                    db.optString("password", ""));
+            case MARIADB -> DbConnectionConfig.mariadb(
+                    db.optString("host", "127.0.0.1"),
+                    db.optInt("port", 3306),
+                    db.optString("database", "nexus"),
+                    db.optString("username", "root"),
+                    db.optString("password", ""));
+            case POSTGRESQL -> DbConnectionConfig.postgresql(
+                    db.optString("host", "127.0.0.1"),
+                    db.optInt("port", 5432),
+                    db.optString("database", "nexus"),
+                    db.optString("username", "postgres"),
+                    db.optString("password", ""));
+            case MSSQL -> DbConnectionConfig.mssql(
+                    db.optString("host", "127.0.0.1"),
+                    db.optInt("port", 1433),
+                    db.optString("database", "nexus"),
+                    db.optString("username", "sa"),
+                    db.optString("password", ""));
+            case SQLITE -> DbConnectionConfig.sqlite(db.optString("filePath", "nexus-data.db"));
+        };
+    }
+
     public static NexusWebConfig load() {
         try {
             if (!Files.exists(CONFIG_PATH)) return null;
@@ -64,3 +107,4 @@ public class NexusWebConfig {
         return !adminUsername.isBlank() && !adminPasswordHash.isBlank();
     }
 }
+
