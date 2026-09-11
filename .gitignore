@@ -36,3 +36,13 @@ build/
 
 ### Mac OS ###
 .DS_Store
+
+# Local config and runtime artifacts
+/config.json
+/server.log
+*.log
+*.csv
+*.db
+cache-metrics.json
+addons.csv
+nexus-data.db

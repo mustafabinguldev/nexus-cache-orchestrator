@@ -44,8 +44,15 @@ public class SecurityConfig {
 
     @Bean
     public UserDetailsService userDetailsService() {
+        String pwd = adminPasswordHash == null ? "" : adminPasswordHash;
+        // Support a development helper: if config contains a PLAIN: prefix, encode it at startup
+        if (pwd.startsWith("PLAIN:")) {
+            String raw = pwd.substring("PLAIN:".length());
+            pwd = passwordEncoder().encode(raw);
+        }
+
         UserDetails admin = User.withUsername(adminUsername)
-                .password(adminPasswordHash)
+                .password(pwd)
                 .roles("ADMIN")
                 .build();
         return new InMemoryUserDetailsManager(admin);
