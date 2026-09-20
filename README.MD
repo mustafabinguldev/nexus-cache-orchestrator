@@ -4,7 +4,7 @@
 
 Nexus Core centralizes player and game data behind Redis messaging. Server plugins send requests; Core handles caching, pluggable persistence (MongoDB, MySQL, MariaDB, PostgreSQL, Microsoft SQL Server, or SQLite), and responses through a common addon API.
 
-[Quick start](#quick-start) · [Addons](#create-an-addon) · [Protocol](#messaging) · [Tests](diagnostics/README.md) · [Roadmap](ROADMAP.md)
+[Quick start](#quick-start) · [Addons](#create-an-addon) · [JSON models](#models-without-code) · [Protocol](#messaging) · [Tests](diagnostics/README.md) · [Roadmap](ROADMAP.md)
 
 ## What it provides
 
@@ -12,6 +12,7 @@ Nexus Core centralizes player and game data behind Redis messaging. Server plugi
 - **Pluggable database:** MongoDB, MySQL, MariaDB, PostgreSQL, Microsoft SQL Server, or SQLite — chosen once in the setup wizard, behind a single `DataStore` interface.
 - **Recoverable requests:** Redis Streams with acknowledgements and pending-message redelivery.
 - **Data addons:** define schemas, validation, cache prefixes, and TTLs in Java.
+- **JSON models:** the same schema, cache, metric, and access settings as a definition file in `models/` — no compiling, no JAR.
 - **Signed messages:** HMAC-SHA256, timestamp checks, and nonce validation.
 - **Web dashboard:** authenticated access to statistics, addons, and cached values.
 - **Optional metrics:** InfluxDB integration and cache hit statistics.
@@ -174,6 +175,56 @@ Compile against the Core library JAR, place your addon JAR in **`addons/`**, and
 Cache keys use `{prefix}_{id}`, for example `player_stats_<uuid>`. Returning `false` from `handleRequest` rejects the request. Override `l1CacheEnabled()` to disable L1 for an addon.
 
 For custom asynchronous handlers, use `RedisManager.processTask` or `processMongoTask`, wait for external futures inside the submitted task, and propagate failures so Core can track completion.
+
+## Models without code
+
+An addon that only describes data does not need a Java project. Put a definition file in
+**`models/`**, next to `addons/`, and restart Core: it is registered as a regular addon with the
+same protocol, cache levels, handlers, and tables. Java addons are untouched — the two only have
+to use different `addonId`s and cache prefixes.
+
+```json
+{
+  "addonId": 200,
+  "name": "Animals",
+  "cacheTTL": 300,
+
+  "types": {
+    "Traits": {
+      "types": {
+        "Bird": { "canFly": { "type": "boolean", "default": true } },
+        "Dog":  { "breed":  { "type": "string",  "default": "unknown" } }
+      },
+      "fields": {
+        "bird": { "type": "Bird" },
+        "dog":  { "type": "Dog" }
+      }
+    }
+  },
+
+  "fields": {
+    "uuid":   { "type": "string", "id": true },
+    "kills":  { "type": "long", "default": 0, "metric": true },
+    "traits": { "type": "Traits" },
+    "pets":   { "type": "list", "of": "Traits.Dog" },
+    "scores": { "type": "map",  "key": "string", "of": "int" }
+  }
+}
+```
+
+Types declared under `types` behave like inner classes: nested types are referenced by their
+simple name from inside and as `Outer.Inner` from outside, which is how "birds have their own
+traits, dogs have their own" is modelled. Lists and maps hold scalars or any declared type, and a
+one-off type can be written inline as a `fields` block. Stored documents always match the
+definition: defaults filled in, values coerced to the declared type, undeclared keys dropped.
+
+`metrics` replaces `@NexusMetricConfig`/`@NexusMetric`, and `access` replaces the body of
+`handleRequest` — request types and the sources allowed to send them. Anything beyond that
+(custom validation, custom request types, side effects) is still a Java addon.
+
+A broken definition is skipped with one log line naming the file and the offending path; the
+other models keep loading. The full format reference and a commented example live in
+[models/README.md](models/README.md).
 
 ## Messaging
 

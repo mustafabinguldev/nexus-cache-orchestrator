@@ -4,6 +4,8 @@ import network.darkland.Influxdb.InfluxDBManager;
 import network.darkland.db.DataStore;
 import network.darkland.db.DataStoreFactory;
 import network.darkland.db.DbConnectionConfig;
+import network.darkland.model.schema.JsonModelAddon;
+import network.darkland.model.schema.ModelDefinitionLoader;
 import network.darkland.protocol.DataAddon;
 import network.darkland.protocol.ProtocolHandler;
 import network.darkland.redis.RedisDataContainer;
@@ -89,6 +91,8 @@ public class NexusApplication {
         List<String> names = protocolHandler.getAddondsNames();
         LOGGER.info("Loaded Addons: " + (names.isEmpty() ? "None" : String.join(", ", names)));
 
+        loadJsonModels();
+
         this.influxDBManager = isMetricsEnabled
                 ? new InfluxDBManager(influxUrl, influxToken.toCharArray(), influxOrg, influxBucket)
                 : null;
@@ -163,6 +167,19 @@ public class NexusApplication {
                     "Error while loading addon folder.",
                     e
             );
+        }
+    }
+
+    private void loadJsonModels() {
+        try {
+            List<JsonModelAddon> models = ModelDefinitionLoader.loadAndRegister(
+                    protocolHandler, new File(ModelDefinitionLoader.DEFAULT_DIRECTORY));
+
+            List<String> names = models.stream().map(DataAddon::addonName).toList();
+            LOGGER.info("Loaded JSON Models: " + (names.isEmpty() ? "None" : String.join(", ", names)));
+
+        } catch (Exception e) {
+            LOGGER.log(java.util.logging.Level.SEVERE, "Error while loading the models folder.", e);
         }
     }
 

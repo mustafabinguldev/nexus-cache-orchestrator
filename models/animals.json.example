@@ -1,0 +1,63 @@
+// Rename to animals.json to load it. Comments and trailing commas are allowed.
+{
+  "addonId": 200,
+  "name": "Animals",
+
+  "namespace": "nexus_core_db",
+  "dataset": "animals",
+  "cacheKeyHeaderTag": "animals",
+  "cacheTTL": 300,
+  "l1Cache": true,
+
+  "metrics": { "enabled": false, "measurement": "animals" },
+
+  "access": {
+    "deny": ["REMOVE_DATA"],
+    "sources": { "INCREMENT_DATA": ["lobby", "survival"] }
+  },
+
+  // Shared types, the JSON equivalent of inner classes. A type declared inside
+  // another type is referenced by its simple name from within (Bird), or by a
+  // dotted path from outside (Traits.Bird).
+  "types": {
+    "Traits": {
+      "types": {
+        "Bird": {
+          "canFly":   { "type": "boolean", "default": true },
+          "wingSpan": { "type": "double",  "default": 1.5 }
+        },
+        "Dog": {
+          "breed":   { "type": "string",  "default": "unknown" },
+          "goodBoy": { "type": "boolean", "default": true }
+        }
+      },
+      "fields": {
+        "bird": { "type": "Bird" },
+        "dog":  { "type": "Dog" }
+      }
+    }
+  },
+
+  "fields": {
+    "uuid":  { "type": "string", "id": true },
+    "name":  { "type": "string", "default": "unnamed" },
+    "kills": { "type": "long",   "default": 0, "metric": true },
+
+    "traits": { "type": "Traits" },
+
+    "tags": { "type": "list", "of": "string" },
+    "pets": { "type": "list", "of": "Traits.Dog" },
+
+    "scores":     { "type": "map", "key": "string", "of": "int" },
+    "petsByName": { "type": "map", "of": "Traits.Dog" },
+
+    // An inline type: used only here, so it needs no name.
+    "meta": {
+      "type": "object",
+      "fields": {
+        "note":  { "type": "string" },
+        "level": { "type": "int", "default": 1 }
+      }
+    }
+  }
+}
