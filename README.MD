@@ -26,7 +26,7 @@ Servers ← Redis Pub/Sub ← Nexus Core
 
 ## Quick start
 
-You need **Java 21+**, **Maven 3.9+**, **Redis 7+**, and one supported database (MongoDB, MySQL, MariaDB, PostgreSQL, Microsoft SQL Server, or SQLite — SQLite needs nothing extra installed, it's a single file). Start Redis and your chosen database before launching Core.
+You need **JDK 26**, **Maven 3.9+**, **Redis 7+**, and one supported database (MongoDB, MySQL, MariaDB, PostgreSQL, Microsoft SQL Server, or SQLite — SQLite needs nothing extra installed, it's a single file). Start Redis and your chosen database before launching Core.
 
 ```bash
 git clone https://github.com/mustafabinguldev/nexus-cache-orchestrator.git
@@ -46,10 +46,10 @@ export NEXUS_SIGNING_KEY="<your-shared-secret>"
 $env:NEXUS_SIGNING_KEY = "<your-shared-secret>"
 ```
 
-Run the executable JAR built from the current `1.6.5` project:
+Run the executable JAR built from the current `1.7.0.1` project:
 
 ```bash
-java -jar target/nexus-cache-orchestrato-1.7.0-boot.jar
+java -jar target/nexus-cache-orchestrato-1.7.0.1-boot.jar
 ```
 
 On first launch, the **terminal setup wizard** asks for database connections, optional metrics, a web port, and admin credentials. It saves `config.json` in the working directory, with a BCrypt hash for the admin password.
@@ -258,3 +258,21 @@ Latest recorded validation: **27 data/protocol checks, 8 HTTP checks, and 2 sign
 ## License
 
 [MIT](LICENSE) — Mustafa Bingül.
+## Java 26 runtime
+
+Build and run with JDK 26. Set `JAVA_HOME` to that installation and put its
+`bin` directory on `PATH`; `mvn -version` and `java -version` should agree.
+The compiler uses `--release 26`, with no preview features. The library JAR
+also requires Java 26, so addons/clients that directly load its classes must
+upgrade their JVM. Redis protocol clients are unaffected by the bytecode change.
+
+Request context uses stable `ScopedValue` bindings with explicit propagation
+through tracked executor tasks. Completion tracking still waits for nested tasks
+and reports failures before a stream message can be acknowledged. Redis and
+storage tasks already used virtual threads; web request handling now enables
+Spring Boot virtual threads too. Override with
+`SPRING_THREADS_VIRTUAL_ENABLED=false` if needed for comparison.
+
+Docker builds the checked-out source, runs tests, and copies only the executable
+`*-boot.jar`. Both Docker stages and the Java verification workflow use Java 26.
+See [migration and performance notes](docs/java-26.md).

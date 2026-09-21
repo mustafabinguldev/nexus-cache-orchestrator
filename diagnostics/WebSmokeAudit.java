@@ -12,7 +12,17 @@ public class WebSmokeAudit {
     static final String BASE="http://127.0.0.1:18088";
     static HttpResponse<String> call(HttpClient client,String path,String body) throws Exception {
         var req=HttpRequest.newBuilder(URI.create(BASE+path)).timeout(Duration.ofSeconds(8));
-        if(body!=null) req.header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(body));
+        if(body!=null) {
+            // Obtain the current CSRF cookie, including after login rotates the token.
+            client.send(HttpRequest.newBuilder(URI.create(BASE+"/api/health"))
+                    .timeout(Duration.ofSeconds(8)).build(), HttpResponse.BodyHandlers.discarding());
+            var cookies=(CookieManager)client.cookieHandler().orElseThrow();
+            var token=cookies.getCookieStore().getCookies().stream()
+                    .filter(cookie -> cookie.getName().equals("XSRF-TOKEN") && !cookie.hasExpired())
+                    .findFirst().orElseThrow().getValue();
+            req.header("X-XSRF-TOKEN",token).header("Content-Type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(body));
+        }
         return client.send(req.build(),HttpResponse.BodyHandlers.ofString());
     }
     static void check(String label,boolean ok,int status) {
@@ -22,7 +32,7 @@ public class WebSmokeAudit {
     public static void main(String[] args) throws Exception {
         Path work=Path.of("web").toAbsolutePath();
         Files.createDirectories(work);
-        Path jar=Path.of("../nexus-cache-orchestrato-1.6.5-boot.jar").toAbsolutePath().normalize();
+        Path jar=Path.of(args[0]).toAbsolutePath().normalize();
         String password=UUID.randomUUID().toString();
         JSONObject config=new JSONObject().put("redisHost","127.0.0.1").put("redisPort",16379)
             .put("mongoUri","mongodb://127.0.0.1:17017").put("metricsEnabled",false)
@@ -35,7 +45,7 @@ public class WebSmokeAudit {
         pb.environment().put("NEXUS_CLUSTER_MODE","false");
         Process process=pb.start();
         try {
-            HttpClient anon=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build();
+            HttpClient anon=HttpClient.newBuilder().cookieHandler(new CookieManager(null,CookiePolicy.ACCEPT_ALL)).connectTimeout(Duration.ofSeconds(2)).build();
             long deadline=System.nanoTime()+TimeUnit.SECONDS.toNanos(45);
             while(true) {
                 if(!process.isAlive()) throw new AssertionError("Application exited "+process.exitValue()+"; see web/application.log");

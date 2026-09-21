@@ -2,11 +2,11 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>network.darkland</groupId>
     <artifactId>nexus-cache-orchestrato</artifactId>
-    <version>1.7.0.1</version>
+    <version>1.7.0.2</version>
 
     <properties>
-        <maven.compiler.source>21</maven.compiler.source>
-        <maven.compiler.target>21</maven.compiler.target>
+        <java.version>26</java.version>
+        <maven.compiler.release>${java.version}</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring-boot.version>4.1.1</spring-boot.version>
         <mongodb.version>5.6.1</mongodb.version>
@@ -39,8 +39,7 @@
                 <artifactId>maven-compiler-plugin</artifactId>
                 <version>3.13.0</version>
                 <configuration>
-                    <source>21</source>
-                    <target>21</target>
+                    <release>${maven.compiler.release}</release>
                 </configuration>
             </plugin>
 

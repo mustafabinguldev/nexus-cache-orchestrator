@@ -27,8 +27,8 @@ public class RuntimeAudit {
         public int addonId() { return protocol; }
         public String addonName() { return "RuntimeAudit"; }
         public String cacheKeyHeaderTag() { return RUN+protocol; }
-        public String getDatabase() { return RUN; }
-        public String getCollection() { return "models"+protocol; }
+        public String getNamespace() { return RUN; }
+        public String getDataset() { return "models"+protocol; }
         public int getCacheTTL() { return ttl; }
         public boolean l1CacheEnabled() { return l1; }
         void custom(RequestType t,RequestHandler h) { registerHandler(t,h); }
@@ -68,13 +68,13 @@ public class RuntimeAudit {
     public static void main(String[] args) {
         try {
             if(!NexusSecurityConfig.isSigningEnabled()) throw new IllegalStateException("Set a disposable NEXUS_SIGNING_KEY in the test process");
-            NexusApplication app=new NexusApplication("127.0.0.1",16379,null,null,"mongodb://127.0.0.1:17017",false,null,null,null,null);
+            NexusApplication app=new NexusApplication("127.0.0.1",16379,null,null,network.darkland.db.DbConnectionConfig.mongo("mongodb://127.0.0.1:17017"),false,null,null,null,null);
             Addon normal=new Addon(true,91001), noL1=new Addon(false,91002), expiring=new Addon(true,91003);
             expiring.ttl=1;
             for(Addon a:List.of(normal,noL1,expiring)) app.getProtocolHandler().registerAddon(a);
             try(Jedis redis=new Jedis("127.0.0.1",16379)) {
                 await("consumer group",() -> { try { return !redis.xinfoGroups(RedisManager.STREAM_KEY).isEmpty(); } catch(Exception e) { return false; } });
-                app.getMongoManager().setValue(normal,"baseline",data("baseline",100)).join();
+                app.getDataStore().setValue(normal,"baseline",data("baseline",100)).join();
                 DataModel baseline=normal.getData(new NexusJsonDataContainer("{\"id\":\"baseline\"}")).orElseThrow();
                 check("MongoDB write/read and cache loading",balance(baseline.getValueJson())==100);
 
@@ -91,14 +91,14 @@ public class RuntimeAudit {
                 check("same-key lock remains exclusive with waiting users",blocked && waiting==newcomer);
 
                 for(Addon addon:List.of(noL1,expiring)) {
-                    app.getMongoManager().setValue(addon,"player",data("player",100)).join();
+                    app.getDataStore().setValue(addon,"player",data("player",100)).join();
                     DataModel model=addon.getData(new NexusJsonDataContainer("{\"id\":\"player\"}")).orElseThrow();
                     model.setValueJson(data("player",150));
                     app.getRedisManager().setData(model.getKey(),model.getValueJson(),addon);
                     if(addon==expiring) await("cache expiration",() -> app.getDataContainer().getDataModelFromKey(model.getKey()).isEmpty() && redis.get(model.getKey())==null);
                     flush(app);
                     await("pending write persisted",() -> !app.getDataContainer().getDirtyKeys().contains(model.getKey()));
-                    check(addon==noL1?"L1 disabled: MongoDB balance=150":"expired cache: MongoDB balance=150",balance(app.getMongoManager().getValue(addon,"player").join())==150);
+                    check(addon==noL1?"L1 disabled: MongoDB balance=150":"expired cache: MongoDB balance=150",balance(app.getDataStore().getValue(addon,"player").join())==150);
                 }
 
                 RequestType slow=RequestType.of("AUDIT_SLOW");
@@ -150,14 +150,14 @@ public class RuntimeAudit {
                 for(Addon addon:List.of(normal,noL1)) {
                     StreamEntryID create=send(redis,packet(addon,"SET_DATA",new JSONObject(data("counter",0))));
                     await("SET completed",() -> deleted(redis,create));
-                    check("SET persisted before ACK, L1="+addon.l1,balance(app.getMongoManager().getValue(addon,"counter").join())==0);
+                    check("SET persisted before ACK, L1="+addon.l1,balance(app.getDataStore().getValue(addon,"counter").join())==0);
                     List<StreamEntryID> messages=new ArrayList<>();
                     for(int i=0;i<50;i++) messages.add(send(redis,packet(addon,"INCREMENT_DATA",new JSONObject().put("key","counter").put("field","balance").put("amount",1))));
                     await("concurrent increments",() -> messages.stream().allMatch(id -> deleted(redis,id)));
-                    check("50 concurrent increments persist exactly 50, L1="+addon.l1,balance(app.getMongoManager().getValue(addon,"counter").join())==50 && balance(redis.get(addon.cacheKeyHeaderTag()+"_counter"))==50);
+                    check("50 concurrent increments persist exactly 50, L1="+addon.l1,balance(app.getDataStore().getValue(addon,"counter").join())==50 && balance(redis.get(addon.cacheKeyHeaderTag()+"_counter"))==50);
                 }
 
-                app.getMongoManager().setValue(normal,"readFailure",data("readFailure",777)).join();
+                app.getDataStore().setValue(normal,"readFailure",data("readFailure",777)).join();
                 app.getRedisManager().getResilience().mongoCircuitBreaker().transitionToOpenState();
                 StreamEntryID blockedRead=send(redis,packet(normal,"GET_DATA",new JSONObject().put("id","readFailure")));
                 Thread.sleep(300);
@@ -165,7 +165,7 @@ public class RuntimeAudit {
                 app.getRedisManager().getResilience().mongoCircuitBreaker().reset();
                 redeliver(app,redis,blockedRead);
                 await("Mongo read recovery",() -> deleted(redis,blockedRead));
-                check("Mongo recovery retains original balance=777",balance(app.getMongoManager().getValue(normal,"readFailure").join())==777);
+                check("Mongo recovery retains original balance=777",balance(app.getDataStore().getValue(normal,"readFailure").join())==777);
 
                 app.getRedisManager().getResilience().mongoCircuitBreaker().transitionToOpenState();
                 StreamEntryID failedFlush=send(redis,packet(normal,"INCREMENT_DATA",new JSONObject().put("key","baseline").put("field","balance").put("amount",1)));
@@ -175,7 +175,7 @@ public class RuntimeAudit {
                 app.getRedisManager().getResilience().mongoCircuitBreaker().reset();
                 redeliver(app,redis,failedFlush);
                 await("flush retry",() -> deleted(redis,failedFlush));
-                check("flush retry does not apply increment twice",balance(app.getMongoManager().getValue(normal,"baseline").join())==101);
+                check("flush retry does not apply increment twice",balance(app.getDataStore().getValue(normal,"baseline").join())==101);
 
                 BlockingQueue<String> responses=new LinkedBlockingQueue<>();
                 CountDownLatch subscribed=new CountDownLatch(1);
@@ -202,7 +202,7 @@ public class RuntimeAudit {
 
                 StreamEntryID remove=send(redis,packet(normal,"REMOVE_DATA",new JSONObject().put("id","counter").put("all",true)));
                 await("REMOVE completed",() -> deleted(redis,remove));
-                check("REMOVE clears Redis and MongoDB",redis.get(normal.cacheKeyHeaderTag()+"_counter")==null && app.getMongoManager().getValue(normal,"counter").join()==null);
+                check("REMOVE clears Redis and MongoDB",redis.get(normal.cacheKeyHeaderTag()+"_counter")==null && app.getDataStore().getValue(normal,"counter").join()==null);
             }
             System.out.println("AUDIT SUMMARY checks="+checks+" database="+RUN);
             System.exit(0);

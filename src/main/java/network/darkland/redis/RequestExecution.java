@@ -7,7 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 final class RequestExecution {
-    static final ThreadLocal<RequestExecution> CURRENT = new ThreadLocal<>();
+    private static final ScopedValue<RequestExecution> CURRENT = ScopedValue.newInstance();
     final String deliveryId;
     final Set<String> dirtyKeys = ConcurrentHashMap.newKeySet();
     private final AtomicInteger tasks = new AtomicInteger(1);
@@ -16,20 +16,22 @@ final class RequestExecution {
 
     RequestExecution(String deliveryId) { this.deliveryId = deliveryId; }
 
-    Runnable track(Runnable task) {
-        tasks.incrementAndGet();
-        return () -> {
-            RequestExecution previous = CURRENT.get();
-            CURRENT.set(this);
-            try { task.run(); }
-            catch (Throwable error) { fail(error); }
-            finally {
-                if (previous == null) CURRENT.remove(); else CURRENT.set(previous);
-                finish();
-            }
-        };
+    static RequestExecution current() {
+        return CURRENT.isBound() ? CURRENT.get() : null;
     }
 
+    // Bind explicitly on each executor task: ordinary executors do not inherit scoped values.
+    // The binding is restored automatically, including when a task fails or scopes nest.
+    void run(Runnable task) {
+        try { ScopedValue.where(CURRENT, this).run(task); }
+        catch (Throwable error) { fail(error); }
+        finally { finish(); }
+    }
+
+    Runnable track(Runnable task) {
+        tasks.incrementAndGet();
+        return () -> run(task);
+    }
     void fail(Throwable error) { failure.compareAndSet(null, error); }
 
     void finish() {

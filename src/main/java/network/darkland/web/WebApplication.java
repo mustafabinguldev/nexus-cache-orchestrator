@@ -50,6 +50,7 @@ public class WebApplication {
         springProps.put("nexus.admin.username", cfg.adminUsername);
         springProps.put("nexus.admin.password-hash", cfg.adminPasswordHash);
         springProps.put("spring.main.banner-mode", "off");
+        springProps.put("spring.threads.virtual.enabled", true);
         springProps.put("server.error.include-message", "never");
         springProps.put("server.error.include-stacktrace", "never");
 

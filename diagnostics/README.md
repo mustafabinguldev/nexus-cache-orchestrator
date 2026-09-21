@@ -2,6 +2,15 @@
 
 Bu testler gerçek Redis/MongoDB servisleri ve paketlenmiş uygulama üzerinde çalışır. Yalnızca test için ayrılmış localhost portlarını kullanın; üretim veritabanlarına yönlendirmeyin.
 
+## Java 26 doğrulaması — 21 Eylül 2026
+
+- OpenJDK 26.0.2.1 ile `mvn -B -ntp verify`: **34 test başarılı**; kaynaklar `--release 26` ile derlendi.
+- Gerçek Redis/MongoDB üzerinde RuntimeAudit: **27 kontrol başarılı**.
+- Paketlenmiş JAR üzerinde WebSmokeAudit: **8 kontrol başarılı**, mevcut CSRF cookie/token akışı kullanıldı.
+- İmzasız mesaj varsayılanı ve açık geçiş seçeneği: **2 kontrol başarılı**.
+- `docker build --progress plain -t nexus-core:jdk26 .`: **başarılı**, Linux/Temurin 26 üzerinde testler derleme aşamasında çalıştı. Konteynerin VNC arayüzü ayrıca test edilmedi.
+- Test scripti `JAVA_HOME` içindeki Java/JAR araçlarını ve POM'daki güncel sürümü kullanır. Test addonları mevcut `DataStore`, `getNamespace` ve `getDataset` API'lerine uyarlandı.
+- Yük testi yapılmadı; bu sonuçlar performans kazancı ölçümü değildir. Aşağıdaki 8 Eylül kayıtları tarihsel sonuçlardır.
 ## Sonuçlar — 8 Eylül 2026
 
 İlk incelemede dört hata yeniden üretilmişti. Düzeltmeden sonraki kontroller:

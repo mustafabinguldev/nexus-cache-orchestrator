@@ -135,13 +135,7 @@ public class RedisManager {
                             if (!hasReceipt(pending, "done:")) {
                                 Set<String> writes = completedTasks.get(pending.id());
                                 if (writes == null) {
-                                    RequestExecution.CURRENT.set(execution);
-                                    try { receiver.handleSyncMessage(pending.payload()); }
-                                    catch (Throwable error) { execution.fail(error); }
-                                    finally {
-                                        RequestExecution.CURRENT.remove();
-                                        execution.finish();
-                                    }
+                                    execution.run(() -> receiver.handleSyncMessage(pending.payload()));
                                     execution.await();
                                     writes = Set.copyOf(execution.dirtyKeys);
                                     // A flush retry must not execute an already-applied increment again.
@@ -158,7 +152,6 @@ public class RedisManager {
                         } catch (Exception e) {
                             System.err.println("Nexus: Delivery remains pending: " + pending.id() + " - " + e.getMessage());
                         } finally {
-                            RequestExecution.CURRENT.remove();
                             inFlight.remove(pending.id());
                         }
                     } catch (InterruptedException e) {
@@ -279,7 +272,7 @@ public class RedisManager {
     }
 
     private void submit(ExecutorService executor, Runnable task) {
-        RequestExecution execution = RequestExecution.CURRENT.get();
+        RequestExecution execution = RequestExecution.current();
         if (execution == null) { executor.execute(task); return; }
         Runnable tracked = execution.track(task);
         try { executor.execute(tracked); }
@@ -287,12 +280,12 @@ public class RedisManager {
     }
 
     public static String currentDeliveryId() {
-        RequestExecution execution = RequestExecution.CURRENT.get();
+        RequestExecution execution = RequestExecution.current();
         return execution == null ? null : execution.deliveryId;
     }
 
     public void trackDirty(String key) {
-        RequestExecution execution = RequestExecution.CURRENT.get();
+        RequestExecution execution = RequestExecution.current();
         if (execution != null) execution.dirtyKeys.add(key);
     }
 
